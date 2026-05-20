@@ -47,11 +47,13 @@ async function loadConfig() {
   const config = await chrome.storage.sync.get([
     'firstName', 'lastName', 'email', 'phone', 'phoneCountryCode', 'city',
     'yearsOfExperience', 'maxYearsRequired', 'blacklistKeywords', 'autoNextPage', 'expectedSalary',
-    'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense'
+    'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense',
+    'whitelistKeywords', 'searchKeywords', 'searchLocation', 'autoSearchOnStart',
+    'aiEnabled', 'openrouterApiKey', 'openrouterModel'
   ]);
 
-  // Load from local storage for larger data (resume)
-  const local = await chrome.storage.local.get(['resumeFile', 'resumeFileName']);
+  // Load from local storage for larger data (resume + extracted text)
+  const local = await chrome.storage.local.get(['resumeFile', 'resumeFileName', 'resumeText']);
 
   document.getElementById('firstName').value = config.firstName || '';
   document.getElementById('lastName').value = config.lastName || '';
@@ -64,6 +66,23 @@ async function loadConfig() {
   document.getElementById('expectedSalary').value = config.expectedSalary || '';
   document.getElementById('blacklistKeywords').value = config.blacklistKeywords || '';
   document.getElementById('autoNextPage').checked = config.autoNextPage !== false;
+
+  // Job targeting fields
+  document.getElementById('whitelistKeywords').value = config.whitelistKeywords || '';
+  document.getElementById('searchKeywords').value = config.searchKeywords || '';
+  document.getElementById('searchLocation').value = config.searchLocation || '';
+  document.getElementById('autoSearchOnStart').checked = config.autoSearchOnStart !== false;
+
+  // AI fields
+  document.getElementById('aiEnabled').checked = !!config.aiEnabled;
+  document.getElementById('openrouterApiKey').value = config.openrouterApiKey || '';
+  document.getElementById('openrouterModel').value = config.openrouterModel || 'openai/gpt-4o-mini';
+  document.getElementById('resumeText').value = local.resumeText || '';
+  const statusEl = document.getElementById('resumeTextStatus');
+  if (local.resumeText) {
+    statusEl.textContent = `✓ ${local.resumeText.length} chars parsed`;
+    statusEl.style.color = '#059669';
+  }
 
   // Load common questions (with smart defaults)
   document.getElementById('visaSponsorship').value = config.visaSponsorship || 'no';
@@ -118,11 +137,21 @@ async function saveConfig() {
     visaSponsorship: document.getElementById('visaSponsorship').value,
     legallyAuthorized: document.getElementById('legallyAuthorized').value,
     willingToRelocate: document.getElementById('willingToRelocate').value,
-    driversLicense: document.getElementById('driversLicense').value
+    driversLicense: document.getElementById('driversLicense').value,
+    whitelistKeywords: document.getElementById('whitelistKeywords').value,
+    searchKeywords: document.getElementById('searchKeywords').value,
+    searchLocation: document.getElementById('searchLocation').value,
+    autoSearchOnStart: document.getElementById('autoSearchOnStart').checked,
+    aiEnabled: document.getElementById('aiEnabled').checked,
+    openrouterApiKey: document.getElementById('openrouterApiKey').value,
+    openrouterModel: document.getElementById('openrouterModel').value
   };
 
   showAutoSaveIndicator(true);
   await chrome.storage.sync.set(config);
+  // resumeText goes to local storage (can be larger than sync's 8KB-per-item limit)
+  const resumeTextVal = document.getElementById('resumeText').value;
+  await chrome.storage.local.set({ resumeText: resumeTextVal });
   showAutoSaveIndicator(false);
 }
 
@@ -131,7 +160,9 @@ function setupAutoSave() {
   const inputFields = [
     'firstName', 'lastName', 'email', 'phone', 'phoneCountryCode',
     'city', 'yearsOfExperience', 'maxYearsRequired', 'expectedSalary', 'blacklistKeywords',
-    'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense'
+    'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense',
+    'whitelistKeywords', 'searchKeywords', 'searchLocation',
+    'openrouterApiKey', 'openrouterModel', 'resumeText'
   ];
 
   inputFields.forEach(fieldId => {
@@ -147,31 +178,51 @@ function setupAutoSave() {
     }
   });
 
-  // For checkbox, save immediately
-  const checkbox = document.getElementById('autoNextPage');
-  if (checkbox) {
-    checkbox.addEventListener('change', () => {
-      saveConfig();
-    });
-  }
+  // For checkboxes, save immediately
+  ['autoNextPage', 'autoSearchOnStart', 'aiEnabled'].forEach(id => {
+    const cb = document.getElementById(id);
+    if (cb) {
+      cb.addEventListener('change', () => {
+        saveConfig();
+      });
+    }
+  });
+}
+
+// Build LinkedIn Easy Apply search URL from user keywords + location
+function buildLinkedInSearchUrl(keywords, location) {
+  const base = 'https://www.linkedin.com/jobs/search/';
+  const params = new URLSearchParams();
+  if (keywords && keywords.trim()) params.set('keywords', keywords.trim());
+  if (location && location.trim()) params.set('location', location.trim());
+  params.set('f_AL', 'true'); // Easy Apply filter ON
+  params.set('sortBy', 'DD');  // Date Descending = newest first
+  return `${base}?${params.toString()}`;
+}
+
+// Wait for a tab to finish loading after a navigation
+function waitForTabComplete(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(true);
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    // Hard timeout safety net
+    setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(Date.now() - startedAt >= timeoutMs ? false : true);
+    }, timeoutMs);
+  });
 }
 
 // Start automation
 document.getElementById('start-btn').addEventListener('click', async () => {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    // Check if we're on LinkedIn
-    if (!tab.url || !tab.url.includes('linkedin.com')) {
-      showToast('Please open a LinkedIn jobs page first! (linkedin.com/jobs/...)', 'warning', 6000);
-      return;
-    }
-
-    // Check if on job search page
-    if (!tab.url.includes('/jobs/')) {
-      showToast('Please navigate to LinkedIn Jobs page first! (linkedin.com/jobs/search/ or /jobs/collections/)', 'warning', 6000);
-      return;
-    }
+    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
     // Validate fields before starting
     if (!validateAllFields()) {
@@ -179,10 +230,44 @@ document.getElementById('start-btn').addEventListener('click', async () => {
       return;
     }
 
+    // Read auto-search config
+    const cfg = await chrome.storage.sync.get(['autoSearchOnStart', 'searchKeywords', 'searchLocation']);
+    const autoSearch = cfg.autoSearchOnStart !== false;
+    const hasSearchTerms = (cfg.searchKeywords && cfg.searchKeywords.trim()) ||
+                           (cfg.searchLocation && cfg.searchLocation.trim());
+
+    // Decide whether to navigate. Trigger nav if:
+    //   - autoSearch is on AND user has search terms, AND
+    //   - either not on LinkedIn at all, not on a /jobs/ page, or not on /jobs/search/
+    const onLinkedIn = tab.url && tab.url.includes('linkedin.com');
+    const onJobsSearch = onLinkedIn && tab.url.includes('/jobs/search/');
+    const shouldNavigate = autoSearch && hasSearchTerms && !onJobsSearch;
+
+    if (shouldNavigate) {
+      const url = buildLinkedInSearchUrl(cfg.searchKeywords, cfg.searchLocation);
+      console.log('🔎 Auto-navigating to LinkedIn search:', url);
+      showToast('Navigating to LinkedIn search...', 'info', 3000);
+      await chrome.tabs.update(tab.id, { url });
+      await waitForTabComplete(tab.id);
+      // Give LinkedIn SPA a moment to render results
+      await new Promise(r => setTimeout(r, 1500));
+      // Re-fetch tab info now that URL changed
+      [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    } else {
+      // Manual mode: must already be on a LinkedIn /jobs/ page
+      if (!onLinkedIn) {
+        showToast('Please open a LinkedIn jobs page first, OR set Auto-Search Keywords in Settings.', 'warning', 6000);
+        return;
+      }
+      if (!tab.url.includes('/jobs/')) {
+        showToast('Please navigate to LinkedIn Jobs page, OR enable Auto-Search in Settings.', 'warning', 6000);
+        return;
+      }
+    }
+
     console.log('🔒 SECURITY: Injecting content script ONLY when user clicks Start...');
 
     // CRITICAL: Inject content script ONLY when user clicks Start
-    // This prevents ANY automatic execution
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -534,6 +619,15 @@ function setupResumeUpload() {
         showAutoSaveIndicator(false);
 
         console.log('Resume uploaded successfully:', file.name);
+
+        // Auto-extract text if PDF (only for AI usage)
+        if (file.type === 'application/pdf') {
+          await extractResumeTextFromPdf(file);
+        } else {
+          const statusEl = document.getElementById('resumeTextStatus');
+          statusEl.textContent = 'PDF auto-extract only. For DOC/DOCX, paste resume text manually below.';
+          statusEl.style.color = '#f59e0b';
+        }
       };
 
       reader.readAsDataURL(file);
@@ -548,7 +642,7 @@ function setupResumeUpload() {
     if (!confirm('Remove uploaded resume?')) return;
 
     try {
-      // Remove from storage
+      // Remove from storage (keep extracted resumeText so user can re-edit)
       await chrome.storage.local.remove(['resumeFile', 'resumeFileName', 'resumeFileType']);
 
       // Reset UI
@@ -562,4 +656,45 @@ function setupResumeUpload() {
       console.error('Error removing resume:', error);
     }
   });
+}
+
+// Extract plain text from a PDF File object using PDF.js (loaded via vendor/pdf.min.js)
+async function extractResumeTextFromPdf(file) {
+  const statusEl = document.getElementById('resumeTextStatus');
+  const textarea = document.getElementById('resumeText');
+  try {
+    if (typeof pdfjsLib === 'undefined') {
+      statusEl.textContent = 'PDF.js library not loaded';
+      statusEl.style.color = '#dc2626';
+      return;
+    }
+    // Worker config (extension URL)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('vendor/pdf.worker.min.js');
+
+    statusEl.textContent = 'Extracting text from PDF...';
+    statusEl.style.color = '#6b7280';
+
+    const arrayBuf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => item.str).join(' ');
+      text += pageText + '\n\n';
+    }
+    text = text.trim();
+
+    textarea.value = text;
+    await chrome.storage.local.set({ resumeText: text });
+
+    statusEl.textContent = `✓ Extracted ${text.length} chars from ${pdf.numPages} page(s)`;
+    statusEl.style.color = '#059669';
+    console.log('Resume text extracted, length:', text.length);
+  } catch (err) {
+    console.error('PDF text extraction failed:', err);
+    statusEl.textContent = 'Extraction failed: ' + err.message + ' — paste resume text manually below';
+    statusEl.style.color = '#dc2626';
+  }
 }

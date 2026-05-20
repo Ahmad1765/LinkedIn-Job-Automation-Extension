@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoApplyMax</title>
+  <title>Job Auto Apply</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -16,20 +16,9 @@
           <path d="M9 11V17M9 9V9.01M15 17V13.5C15 12.1193 13.8807 11 12.5 11C11.1193 11 10 12.1193 10 13.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <div class="title-group">
-          <h1>AutoApplyMax</h1>
-          <span class="beta-badge">BETA</span>
+          <h1>Job Auto Apply</h1>
         </div>
       </div>
-      <span class="version">v1.5.1</span>
-    </div>
-
-
-    <!-- CWS Install Banner (shown for GitHub/sideloaded version) -->
-    <div id="cws-banner" style="background:linear-gradient(135deg,#eef5ff,#dceaff);border:1px solid #c7dbff;border-radius:10px;padding:12px 14px;margin-bottom:12px;text-align:center">
-      <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#1e40af">You're using the open-source version</p>
-      <p style="margin:0 0 10px;font-size:11px;color:#6b7280;line-height:1.4">Install from Chrome Web Store for AI Resume, Cover Letters, ATS Checker, Dashboard &amp; automatic updates.</p>
-      <a href="https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk" target="_blank" style="display:inline-block;background:#0a66c2;color:#fff;padding:8px 18px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">Install Full Version Free</a>
-      <button onclick="document.getElementById('cws-banner').style.display='none'" style="display:block;margin:8px auto 0;background:none;border:none;color:#9ca3af;font-size:10px;cursor:pointer">Dismiss</button>
     </div>
 
     <!-- Status Card -->
@@ -299,6 +288,37 @@
 
     <!-- Settings Tab -->
     <div id="settings-tab" class="tab-content">
+      <!-- Job Targeting Section -->
+      <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #e0e0e0;">
+        <h3 style="font-size: 14px; font-weight: 600; color: #0a66c2; margin-bottom: 12px;">🎯 Job Targeting</h3>
+
+        <div class="form-group">
+          <label>Whitelist Keywords (only apply if title matches)</label>
+          <input type="text" id="whitelistKeywords" placeholder="react, frontend, javascript, fullstack">
+          <small>Comma-separated. Only apply to jobs whose TITLE contains at least one of these. Leave empty to disable.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Auto-Search Keywords</label>
+          <input type="text" id="searchKeywords" placeholder="frontend developer">
+          <small>What to type into the LinkedIn Jobs search box on Start. Usually same as your whitelist's primary term.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Auto-Search Location</label>
+          <input type="text" id="searchLocation" placeholder="Remote, United States">
+          <small>Optional. E.g. "Remote", "New York", "United Kingdom". Leave empty for no location filter.</small>
+        </div>
+
+        <div class="toggle-group">
+          <label class="toggle">
+            <input type="checkbox" id="autoSearchOnStart" checked>
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Auto-navigate to LinkedIn search on Start</span>
+          </label>
+        </div>
+      </div>
+
       <div class="form-group">
         <label>Blacklist Keywords</label>
         <input type="text" id="blacklistKeywords" placeholder="internship, junior, entry-level, stage, alternance">
@@ -365,6 +385,38 @@
           <span class="toggle-label">Auto next page</span>
         </label>
       </div>
+
+      <!-- AI Assistance Section -->
+      <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        <h3 style="font-size: 14px; font-weight: 600; color: #0a66c2; margin-bottom: 12px;">🤖 AI Assistance (OpenRouter)</h3>
+        <p style="font-size: 11px; color: #6b7280; margin-bottom: 12px;">When an application asks a question that doesn't match any built-in rule, the AI uses your resume + profile to generate an answer.</p>
+
+        <div class="toggle-group">
+          <label class="toggle">
+            <input type="checkbox" id="aiEnabled">
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Enable AI fallback for unknown questions</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>OpenRouter API Key</label>
+          <input type="password" id="openrouterApiKey" placeholder="sk-or-v1-...">
+          <small>Get a key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a>. Stored locally only.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="openrouterModel" placeholder="openai/gpt-4o-mini" value="openai/gpt-4o-mini">
+          <small>Cheap defaults: <code>openai/gpt-4o-mini</code>, <code>anthropic/claude-3.5-haiku</code>, <code>google/gemini-flash-1.5</code>.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Resume Text (auto-extracted from your uploaded PDF)</label>
+          <textarea id="resumeText" rows="6" placeholder="Will be filled automatically when you upload a PDF resume above. You can also paste/edit manually." style="width:100%;font-family:monospace;font-size:11px"></textarea>
+          <small><span id="resumeTextStatus" style="color:#6b7280">No resume parsed yet</span></small>
+        </div>
+      </div>
     </div>
 
     <!-- Applied Jobs Tab -->
@@ -429,65 +481,21 @@
       </button>
     </div>
 
-    <!-- Feedback Section -->
-    <div class="feedback-card">
-      <div class="feedback-header">
-        <div class="feedback-icon">💙</div>
-        <div>
-          <h3>Support This Free Tool!</h3>
-          <p>AutoApplyMax is 100% free, built to help job seekers. We're a small project and every bit of support helps!</p>
-        </div>
-      </div>
-      <div class="feedback-items">
-        <div class="feedback-item">
-          <span class="check-icon">⭐</span>
-          <span>Leave a 5-star review on Chrome Web Store</span>
-        </div>
-        <div class="feedback-item">
-          <span class="check-icon">📤</span>
-          <span>Share with friends looking for jobs</span>
-        </div>
-        <div class="feedback-item">
-          <span class="check-icon">💬</span>
-          <span>Join Discord to report bugs & suggest features</span>
-        </div>
-      </div>
-      <div class="feedback-buttons">
-        <a href="https://chromewebstore.google.com/detail/easyapplymax/oeaobljpdipleeanlfjppmlokkajodbk/reviews" target="_blank" class="btn-review">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-          </svg>
-          Leave a Review
-        </a>
-        <a href="https://discord.gg/xWaCXBZbws" target="_blank" class="btn-discord">
-          <svg width="16" height="16" viewBox="0 0 71 55" fill="currentColor">
-            <path d="M60.1045 4.8978C55.5792 2.8214 50.7265 1.2916 45.6527 0.41542C45.5603 0.39851 45.468 0.440769 45.4204 0.525289C44.7963 1.6353 44.105 3.0834 43.6209 4.2216C38.1637 3.4046 32.7345 3.4046 27.3892 4.2216C26.905 3.0581 26.1886 1.6353 25.5617 0.525289C25.5141 0.443589 25.4218 0.40133 25.3294 0.41542C20.2584 1.2888 15.4057 2.8186 10.8776 4.8978C10.8384 4.9147 10.8048 4.9429 10.7825 4.9795C1.57795 18.7309 -0.943561 32.1443 0.293408 45.3914C0.299005 45.4562 0.335386 45.5182 0.385761 45.5576C6.45866 50.0174 12.3413 52.7249 18.1147 54.5195C18.2071 54.5477 18.305 54.5139 18.3638 54.4378C19.7295 52.5728 20.9469 50.6063 21.9907 48.5383C22.0523 48.4172 21.9935 48.2735 21.8676 48.2256C19.9366 47.4931 18.0979 46.6 16.3292 45.5858C16.1893 45.5041 16.1781 45.304 16.3068 45.2082C16.679 44.9293 17.0513 44.6391 17.4067 44.3461C17.471 44.2926 17.5606 44.2813 17.6362 44.3151C29.2558 49.6202 41.8354 49.6202 53.3179 44.3151C53.3935 44.2785 53.4831 44.2898 53.5502 44.3433C53.9057 44.6363 54.2779 44.9293 54.6529 45.2082C54.7816 45.304 54.7732 45.5041 54.6333 45.5858C52.8646 46.6197 51.0259 47.4931 49.0921 48.2228C48.9662 48.2707 48.9102 48.4172 48.9718 48.5383C50.038 50.6034 51.2554 52.5699 52.5959 54.435C52.6519 54.5139 52.7526 54.5477 52.845 54.5195C58.6464 52.7249 64.529 50.0174 70.6019 45.5576C70.6551 45.5182 70.6887 45.459 70.6943 45.3942C72.1747 30.0791 68.2147 16.7757 60.1968 4.9823C60.1772 4.9429 60.1437 4.9147 60.1045 4.8978Z"/>
-          </svg>
-          Join Discord
-        </a>
-      </div>
-    </div>
-
     <!-- Instructions -->
     <div class="instructions">
       <details>
         <summary>📖 How to use</summary>
         <ol>
-          <li>Go to LinkedIn and activate <strong>Easy Apply filter</strong></li>
+          <li>Go to LinkedIn and activate <strong>Easy Apply filter</strong> (or enable Auto-Search in Settings)</li>
           <li>Fill in your personal information above</li>
-          <li>Click <strong>Save Config</strong></li>
           <li>Click <strong>Start</strong> to begin auto-applying</li>
           <li>Open Browser Console (F12) to see detailed logs</li>
         </ol>
       </details>
     </div>
-
-    <!-- Footer -->
-    <div class="footer">
-      <small>Community-driven project • Follow @Azo92i on Twitter</small>
-    </div>
   </div>
 
+  <script src="vendor/pdf.min.js"></script>
   <script src="popup-improvements.js"></script>
   <script src="popup.js"></script>
 </body>

@@ -1,15 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "AutoApplyMax",
-  "version": "1.5.3",
-  "description": "Automate LinkedIn Easy Apply job applications - Works on /jobs/search/ and /jobs/collections/",
+  "name": "Job Auto Apply",
+  "version": "1.0.0",
+  "description": "Automated LinkedIn Easy Apply with AI-powered question answering",
   "permissions": [
     "storage",
     "activeTab",
     "scripting"
   ],
   "host_permissions": [
-    "https://www.linkedin.com/*"
+    "https://www.linkedin.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["vendor/pdf.worker.min.js"],
+      "matches": ["<all_urls>"]
+    }
   ],
   "action": {
     "default_popup": "popup.html",

@@ -56,6 +56,88 @@ function isStuck() {
   return timeSinceActivity > STUCK_TIMEOUT;
 }
 
+// ===== Locale-independent LinkedIn selectors =====
+// LinkedIn translates UI text (button labels, aria-labels) per account language.
+// Match on DOM structure + data-attrs (not translated) rather than visible text
+// wherever possible, so the bot works for non-English LinkedIn accounts.
+
+// Easy Apply button. Excludes external-apply buttons (which embed a
+// link-external icon) without relying on the localized "Easy Apply" aria-label.
+function findEasyApplyButton(scope = document) {
+  const candidates = scope.querySelectorAll('button.jobs-apply-button');
+  for (const btn of candidates) {
+    if (!btn.offsetParent || btn.disabled) continue;
+    const external = btn.querySelector(
+      'li-icon[type="link-external"], ' +
+      '[data-test-icon*="link-external"], ' +
+      'svg[data-test-icon*="link-external"], ' +
+      'use[href*="link-external"]'
+    );
+    if (external) continue;
+    return btn;
+  }
+  return null;
+}
+
+// Primary action button in an Easy Apply modal step.
+// Returns { btn, type: 'next' | 'review' | 'submit' } or null.
+// Prefers LinkedIn's internal data-attrs which are NOT localized.
+function findModalStepButton(modal) {
+  if (!modal) return null;
+  const visible = (el) => el && el.offsetParent !== null && !el.disabled;
+
+  let btn = modal.querySelector(
+    'button[data-live-test-easy-apply-submit-button], ' +
+    'button[data-control-name="submit_unify"]'
+  );
+  if (visible(btn)) return { btn, type: 'submit' };
+
+  btn = modal.querySelector(
+    'button[data-live-test-easy-apply-review-button], ' +
+    'button[data-control-name="review_unify"]'
+  );
+  if (visible(btn)) return { btn, type: 'review' };
+
+  btn = modal.querySelector(
+    'button[data-easy-apply-next-button], ' +
+    'button[data-live-test-easy-apply-next-button], ' +
+    'button[data-control-name="continue_unify"]'
+  );
+  if (visible(btn)) return { btn, type: 'next' };
+
+  // Fallback: right-most primary button in the action bar / footer.
+  const footer =
+    modal.querySelector('.artdeco-modal__actionbar') ||
+    modal.querySelector('footer') ||
+    modal.querySelector('.jobs-easy-apply-modal__footer');
+  if (footer) {
+    const primaries = Array.from(
+      footer.querySelectorAll('button.artdeco-button--primary')
+    ).filter(visible);
+    if (primaries.length) {
+      const primary = primaries[primaries.length - 1];
+      const t = (primary.textContent || '').toLowerCase().trim();
+      // Multi-locale "submit" hint — last-resort heuristic; data-attrs above
+      // are the authoritative path.
+      const submitWords = /(submit|envoyer|soumettre|enviar|absenden|senden|invia|inviare|wyślij|verzenden|送信|提交|إرسال|kandidatur|kandidatuur|kandidaturen)/i;
+      return { btn: primary, type: submitWords.test(t) ? 'submit' : 'next' };
+    }
+  }
+  return null;
+}
+
+// Primary button in the "safety reminder" pre-apply dialog.
+function findSafetyContinueButton(modal) {
+  if (!modal) return null;
+  const visible = (el) => el && el.offsetParent !== null;
+  const scope =
+    modal.querySelector('.artdeco-modal__actionbar') ||
+    modal.querySelector('footer') ||
+    modal;
+  const primary = scope.querySelector('button.artdeco-button--primary');
+  return visible(primary) ? primary : null;
+}
+
 // Check for LinkedIn's daily Easy Apply limit
 function checkDailyLimit() {
   try {
@@ -126,7 +208,29 @@ function checkDailyLimit() {
 async function findAndClickDoneButton(contextElement = document, contextName = 'page', maxAttempts = 15) {
   log(`🔍 [${contextName}] Starting exhaustive search for Done button...`);
 
-  const doneTexts = ['Done', 'Terminé', 'Submit application', 'Soumettre la candidature', 'Dismiss', 'Close', 'Fermer'];
+  // FAST PATH (locale-independent): the post-submit success modal has an
+  // artdeco close (X) button that dismisses it regardless of UI language.
+  const dismissBtn = contextElement.querySelector(
+    'button.artdeco-modal__dismiss, ' +
+    'button[data-control-name="dismiss"], ' +
+    'button[data-test-modal-close-btn]'
+  );
+  if (dismissBtn && dismissBtn.offsetParent !== null) {
+    log(`✅ [${contextName}] Locale-independent dismiss button found, clicking`);
+    try { dismissBtn.click(); } catch (_) {
+      try { dismissBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch (_) {}
+    }
+    updateActivity();
+    await wait(700);
+    return { success: true, clicked: true };
+  }
+
+  // Localized text fallbacks — covers many LinkedIn UI languages.
+  const doneTexts = [
+    'Done', 'Terminé', 'Fertig', 'Hecho', 'Concluído', 'Concluido', 'Fatto', 'Klaar', 'Gotowe', '完了', '完成', '완료',
+    'Submit application', 'Soumettre la candidature', 'Bewerbung absenden', 'Enviar candidatura', 'Invia candidatura', 'Verzenden', 'Wyślij',
+    'Dismiss', 'Close', 'Fermer', 'Schließen', 'Cerrar', 'Fechar', 'Chiudi', 'Sluiten', 'Zamknij', '閉じる', '关闭', '닫기'
+  ];
   let doneBtn = null;
 
   for (let attempt = 0; attempt < maxAttempts && !doneBtn; attempt++) {
@@ -298,7 +402,20 @@ async function refreshAndReturnToSearch() {
 async function discardApplication() {
   log('🚀 DISCARD: Starting SAFE discard sequence...');
 
-  const discardTexts = ['discard', 'annuler', 'cancel', 'abandonner', 'descarter'];
+  // Multi-locale fallback. The class-based dismiss above (STEP 1) handles
+  // most cases; this is defense in depth for confirmation dialogs.
+  const discardTexts = [
+    'discard', 'cancel',
+    'annuler', 'abandonner',         // FR
+    'descartar', 'cancelar',         // ES/PT
+    'verwerfen', 'abbrechen',        // DE
+    'scarta', 'annulla',             // IT
+    'verwijderen', 'annuleren',      // NL
+    'odrzuć', 'anuluj',              // PL
+    '破棄', 'キャンセル',             // JA
+    '丢弃', '取消',                   // ZH
+    '취소'                            // KO
+  ];
 
   try {
     // 🆕 DETECTION CRITIQUE: Vérifier si popup de chargement est bloqué (Python ligne 1547-1558)
@@ -423,9 +540,32 @@ function fill(input, value) {
     return; // BLOCK THE FILL
   }
 
-  input.value = value;
+  const strVal = value == null ? '' : String(value);
+
+  // React-compatible setter: writes through React's internal value tracker
+  // so React-controlled inputs (like LinkedIn's Easy Apply form) reflect the change.
+  try {
+    const proto = input.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(input, strVal);
+    } else {
+      input.value = strVal;
+    }
+  } catch (_) {
+    input.value = strVal;
+  }
+
+  // Focus first so React sees field as "touched"
+  try { input.focus(); } catch (_) {}
+
+  // Dispatch the events React/LinkedIn listens for
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+  // Some LinkedIn fields validate on blur — give them a synthetic blur after a tick
+  try { input.blur(); } catch (_) {}
 }
 
 // Convert base64 to File object for resume upload
@@ -547,19 +687,48 @@ async function mainLoop() {
         continue;
       }
 
-      // Python ligne 1695: job_listings = driver.find_elements(By.XPATH, "//li[@data-occludable-job-id]")
+      // Primary selector — older LinkedIn DOM
       let jobCards = document.querySelectorAll('li[data-occludable-job-id]');
 
-      // ONLY on collections page: use fallback selectors if no jobs found with standard selector
-      if (jobCards.length === 0 && isCollectionsPage) {
-        jobCards = document.querySelectorAll('.jobs-search-results__list-item, .scaffold-layout__list-item');
-        if (jobCards.length > 0) {
-          log(`📋 Collections mode: found ${jobCards.length} jobs with fallback selectors`);
+      // Broader fallback chain — try newer LinkedIn DOM variants on any page type.
+      // LinkedIn frequently changes class names; cascade through known variants.
+      if (jobCards.length === 0) {
+        const fallbackSelectors = [
+          'li.scaffold-layout__list-item',
+          'li.jobs-search-results__list-item',
+          'div.job-card-container',
+          'li.ember-view.jobs-search-results__list-item',
+          '[data-job-id]',
+          '.jobs-search-results-list__list-item',
+          'div[data-view-name="job-card"]'
+        ];
+        for (const sel of fallbackSelectors) {
+          const found = document.querySelectorAll(sel);
+          if (found.length > 0) {
+            jobCards = found;
+            log(`📋 Found ${found.length} jobs using fallback selector: ${sel}`);
+            break;
+          }
         }
       }
 
       if (jobCards.length === 0) {
         log(`Aucune offre trouvée. Attente 5s...`);
+        log(`   URL: ${location.href}`);
+        // Diagnostic: count anything that LOOKS like a job result container
+        const diag = {
+          'li[data-occludable-job-id]': document.querySelectorAll('li[data-occludable-job-id]').length,
+          'li.scaffold-layout__list-item': document.querySelectorAll('li.scaffold-layout__list-item').length,
+          'div.job-card-container': document.querySelectorAll('div.job-card-container').length,
+          '[data-job-id]': document.querySelectorAll('[data-job-id]').length,
+          'a[href*="/jobs/view/"]': document.querySelectorAll('a[href*="/jobs/view/"]').length
+        };
+        log(`   Diag: ${JSON.stringify(diag)}`);
+        // Detect "0 results" state vs. "DOM out of date" state
+        const noResultsBanner = document.body.innerText.match(/no (?:matching )?jobs?(?: found)?|no results|aucun emploi|aucune offre/i);
+        if (noResultsBanner) {
+          log(`   ℹ️ LinkedIn says: "${noResultsBanner[0]}" — broaden your search keywords or remove location filter.`);
+        }
 
         // Check if page is unrecognized (no jobs for too long)
         if (isStuck()) {
@@ -605,22 +774,21 @@ async function mainLoop() {
           }
         }
 
-        // Get job info for filtering
-        // Use extended selectors ONLY on collections page
-        let jobTitle, jobCompany, jobDescription;
-        if (isCollectionsPage) {
-          jobTitle = job.querySelector('.job-card-list__title, .artdeco-entity-lockup__title, .job-card-container__link strong, a[class*="job-card"] strong')?.textContent.trim() || '';
-          jobCompany = job.querySelector('.job-card-container__primary-description, .artdeco-entity-lockup__subtitle, .artdeco-entity-lockup__caption')?.textContent.trim() || '';
-          jobDescription = job.querySelector('.job-card-container__metadata-item, .job-card-list__insight')?.textContent.trim() || '';
-        } else {
-          // Standard selectors for /jobs/search/
-          jobTitle = job.querySelector('.job-card-list__title, .artdeco-entity-lockup__title')?.textContent.trim() || '';
-          jobCompany = job.querySelector('.job-card-container__primary-description, .artdeco-entity-lockup__subtitle')?.textContent.trim() || '';
-          jobDescription = job.querySelector('.job-card-container__metadata-item')?.textContent.trim() || '';
-        }
+        // Get job info for filtering — broad selector cascade for resilience to LinkedIn DOM changes
+        const jobTitle = extractJobTitle(job);
+        const jobCompany = extractJobCompany(job);
+        const jobDescription = extractJobDescription(job);
+        log(`   📝 Title: "${jobTitle}" | Company: "${jobCompany}"`);
 
         // Check blacklist keywords
         if (shouldSkipByBlacklist(jobTitle, jobCompany, jobDescription, config.blacklistKeywords)) {
+          skippedCount++;
+          updateSkippedCount();
+          continue;
+        }
+
+        // Check whitelist keywords — only apply if title matches at least one
+        if (shouldSkipByWhitelist(jobTitle, config.whitelistKeywords)) {
           skippedCount++;
           updateSkippedCount();
           continue;
@@ -643,17 +811,10 @@ async function mainLoop() {
           await wait(600); // Ultra optimized job link wait
         }
 
-        // Chercher Easy Apply (Python ligne 1853)
-        let easyApplyBtn = document.querySelector('button.jobs-apply-button[aria-label*="Easy"]');
-
-        // ONLY on collections page: try additional selectors if not found
-        if (!easyApplyBtn && isCollectionsPage) {
-          // Try other Easy Apply selectors (must contain "Easy" to avoid external Apply)
-          easyApplyBtn = document.querySelector('button[aria-label*="Easy Apply"]');
-          if (easyApplyBtn) {
-            log('📋 Found Easy Apply with collections selector');
-          }
-        }
+        // Easy Apply — locale-independent: button.jobs-apply-button without
+        // a link-external icon. LinkedIn translates the aria-label per account
+        // language, so text matching breaks for non-English users.
+        const easyApplyBtn = findEasyApplyButton(document);
 
         if (!easyApplyBtn) {
           log('Pas Easy Apply, skip');
@@ -665,24 +826,17 @@ async function mainLoop() {
         await click(easyApplyBtn);
         await wait(800); // Ultra optimized Easy Apply wait
 
-        // Safety reminder modal ("Continue applying")
-        // LinkedIn sometimes shows a "Job search safety reminder" dialog
+        // Safety reminder modal ("Continue applying") — locale-independent:
+        // if a generic dialog appears BEFORE the Easy Apply form modal,
+        // click its primary action button.
         const safetyModal = document.querySelector('[role="dialog"], .artdeco-modal');
-        if (safetyModal && safetyModal.offsetParent !== null) {
-          const safetyText = safetyModal.textContent.toLowerCase();
-          if (safetyText.includes('safety reminder') || safetyText.includes('rappel de sécurité') ||
-              safetyText.includes('continue applying') || safetyText.includes('continuer à postuler')) {
-            log('Safety reminder detected — clicking Continue applying...');
-            const continueBtn = Array.from(safetyModal.querySelectorAll('button')).find(btn => {
-              const t = btn.textContent.trim().toLowerCase();
-              return t.includes('continue applying') || t.includes('continuer à postuler') ||
-                     t.includes('continue') || t.includes('continuer');
-            });
-            if (continueBtn) {
-              await click(continueBtn);
-              log('Safety reminder dismissed');
-              await wait(1000);
-            }
+        const easyApplyModalOpen = document.querySelector('.jobs-easy-apply-modal');
+        if (safetyModal && safetyModal.offsetParent !== null && !easyApplyModalOpen) {
+          const continueBtn = findSafetyContinueButton(safetyModal);
+          if (continueBtn) {
+            log('Safety reminder detected — clicking primary button...');
+            await click(continueBtn);
+            await wait(1000);
           }
         }
 
@@ -774,8 +928,12 @@ async function mainLoop() {
         const applicationTimeout = 180000; // 3 minutes max par candidature
         let loadingScreenTimeout = 20000; // 20 secondes pour écran de chargement (Python ligne 1481-1497)
         let lastActivityTime = Date.now();
+        let disabledRetries = 0;         // counts consecutive "Next disabled" attempts before discard
+        let validationRetries = 0;       // counts consecutive validation-error sightings before discard
+        const MAX_DISABLED_RETRIES = 4;  // ~6s of retry time
+        const MAX_VALIDATION_RETRIES = 3;
 
-        while (step < 10) {
+        while (step < 30) {  // allow more iterations (multi-step apps with retries can exceed 10)
           step++;
 
           // TIMEOUT CHECK (Python ligne 639)
@@ -797,31 +955,39 @@ async function mainLoop() {
             break;
           }
 
-          // CHECK FOR VALIDATION ERRORS EARLY (stuck scenario)
+          // CHECK FOR VALIDATION ERRORS EARLY — but give the fill pass a chance to retry first
           let modal = document.querySelector('.jobs-easy-apply-modal');
           if (modal) {
-            const errors = modal.querySelectorAll('[role="alert"], .artdeco-inline-feedback--error, .fb-form-element-label__error');
+            // Locale-independent: error elements use stable LinkedIn CSS
+            // classes; visible presence = validation failure, no text check
+            // needed (which would fail for non-English UI languages).
+            const errors = modal.querySelectorAll(
+              '.artdeco-inline-feedback--error, ' +
+              '.fb-form-element-label__error, ' +
+              '[role="alert"].artdeco-inline-feedback'
+            );
+            let validationErrorSeen = false;
             for (let error of errors) {
-              if (error.offsetParent !== null) {
-                const errorText = error.textContent.toLowerCase();
-                if (errorText.includes('please enter') ||
-                    errorText.includes('valid answer') ||
-                    errorText.includes('required') ||
-                    errorText.includes('must be') ||
-                    errorText.includes('invalid')) {
-
-                  log(`❌ STUCK: Validation error detected: ${error.textContent.substring(0, 50)}`);
-                  log('⚠️ Discarding application due to validation error');
-
-                  await discardApplication();
-                  skippedCount++;
-                  updateSkippedCount();
-                  step = 999; // Force break
-                  break;
-                }
+              if (error.offsetParent !== null && error.textContent.trim()) {
+                validationErrorSeen = true;
+                log(`⚠️ Validation error visible (retry ${validationRetries + 1}/${MAX_VALIDATION_RETRIES}): ${error.textContent.substring(0, 60)}`);
+                break;
               }
             }
-            if (step === 999) break;
+            if (validationErrorSeen) {
+              validationRetries++;
+              if (validationRetries >= MAX_VALIDATION_RETRIES) {
+                log('❌ Validation error persists after retries — DISCARDING');
+                await discardApplication();
+                skippedCount++;
+                updateSkippedCount();
+                step = 999;
+                break;
+              }
+              // Don't discard yet — fall through to fill pass, give AI/rules another chance
+            } else {
+              validationRetries = 0; // reset on clean step
+            }
           }
 
           // CHECK LOADING SCREEN (Python ligne 1481-1497)
@@ -868,6 +1034,10 @@ async function mainLoop() {
             break;
           }
 
+          // 0. AI BATCH PREFETCH — one API call answers all AI-needed questions on this step.
+          // Populates the cache; the per-field askLLM calls below become free cache hits.
+          await prefetchAIQuestions(modal);
+
           // 1. TEXT FIELDS (Python line 1102) - Multilingual support
           const textInputs = modal.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="number"]');
           for (let input of textInputs) {
@@ -895,8 +1065,11 @@ async function mainLoop() {
 
             const label = labelText.toLowerCase();
 
-            // Years of experience (EN/FR/ES/DE/IT)
-            if (label.match(/experience|years|expérience|années|años|jahre|anni|esperienza/)) {
+            // Years of experience (EN/FR/ES/DE/IT) — require a year-word AND treat skill-specific questions as AI-eligible
+            // We only auto-answer GENERIC "years of experience" with the default. Skill-specific ones go to AI.
+            const isGenericYearsQuestion = label.match(/(years?|yrs?|années?|años|jahre|anni)\b/) &&
+                                           !label.match(/with|in|of|avec|en|dans|with the|with our/);
+            if (isGenericYearsQuestion) {
               fill(input, config.yearsOfExperience || '2');
               log(`Years exp: ${config.yearsOfExperience || '2'}`);
             }
@@ -975,6 +1148,109 @@ async function mainLoop() {
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
                 await wait(300);
               }
+            }
+            // AI FALLBACK: any unknown text input → ask the LLM
+            else {
+              const cleanQuestion = labelText.replace(/\s+/g, ' ').trim();
+              // Detect numeric intent even when input.type is "text" — LinkedIn does this often
+              const looksNumeric =
+                input.type === 'number' ||
+                input.getAttribute('inputmode') === 'numeric' ||
+                /\b(numeric|number)\b/.test(input.getAttribute('pattern') || '') ||
+                /(whole\s+number|how\s+many|how\s+much|number\s+between|enter\s+a\s+number|years?\b|nombre|combien|cuántos|wieviel|quanti)/i.test(cleanQuestion);
+              const fieldType = looksNumeric ? 'number' : 'text';
+
+              // Parse min/max from the question text to give the model a tighter constraint
+              let minMax = '';
+              const rangeMatch = cleanQuestion.match(/between\s+(\d+)\s+and\s+(\d+)/i);
+              if (rangeMatch) minMax = ` Answer must be between ${rangeMatch[1]} and ${rangeMatch[2]}.`;
+              const maxAttr = input.getAttribute('max');
+              const minAttr = input.getAttribute('min');
+              if (!minMax && (minAttr || maxAttr)) {
+                minMax = ` Answer must be between ${minAttr || 0} and ${maxAttr || 99}.`;
+              }
+
+              // Detect "years of experience with X" so we have a safe fallback
+              const isYearsWithSkill = /\byears?\b.*\bwith\b|\bhow\s+many\s+years?\b/i.test(cleanQuestion);
+
+              const applyNumeric = (val) => {
+                let finalValue = String(val);
+                const digits = finalValue.match(/\d+/)?.[0];
+                finalValue = digits || '1';
+                if (rangeMatch) {
+                  const lo = parseInt(rangeMatch[1]);
+                  const hi = parseInt(rangeMatch[2]);
+                  finalValue = String(Math.max(lo, Math.min(hi, parseInt(finalValue))));
+                } else if (minAttr || maxAttr) {
+                  const lo = parseInt(minAttr || '0');
+                  const hi = parseInt(maxAttr || '99');
+                  finalValue = String(Math.max(lo, Math.min(hi, parseInt(finalValue))));
+                }
+                return finalValue;
+              };
+
+              if (!cleanQuestion) {
+                log(`⚠️ Unknown text input has no detectable label/aria-label — cannot fill (input.id=${input.id || 'none'}, name=${input.name || 'none'})`);
+              } else if (!config?.aiEnabled) {
+                // AI off — still try the safe years-fallback so application can proceed
+                if (fieldType === 'number' && isYearsWithSkill) {
+                  const fallback = applyNumeric(config.yearsOfExperience || '2');
+                  fill(input, fallback);
+                  log(`📌 AI off — used default years (${fallback}) for: "${cleanQuestion.substring(0, 60)}"`);
+                } else {
+                  log(`⚠️ Unknown ${fieldType} question detected but AI is OFF — enable "AI Assistance" in Settings: "${cleanQuestion.substring(0, 60)}"`);
+                }
+              } else {
+                log(`🔎 Unknown ${fieldType} question, asking AI: "${cleanQuestion.substring(0, 60)}"`);
+                const aiAnswer = await askLLM(cleanQuestion + minMax, fieldType, []);
+                if (aiAnswer) {
+                  const finalValue = fieldType === 'number' ? applyNumeric(aiAnswer) : aiAnswer;
+                  fill(input, finalValue);
+                  log(`✏️ AI filled "${cleanQuestion.substring(0, 40)}" with "${finalValue.substring(0, 50)}"`);
+                } else if (fieldType === 'number' && isYearsWithSkill) {
+                  // SAFETY NET: AI failed (rate-limited / refused) but we know this is a "years with X" question.
+                  // Use the configured default years so application isn't blocked by one missing answer.
+                  const fallback = applyNumeric(config.yearsOfExperience || '2');
+                  fill(input, fallback);
+                  log(`🛟 AI failed — used default years (${fallback}) as safe fallback for: "${cleanQuestion.substring(0, 60)}"`);
+                } else {
+                  log(`❌ AI returned no answer for "${cleanQuestion.substring(0, 60)}" — leaving blank (will likely block Submit)`);
+                }
+              }
+            }
+          }
+
+          // 1b. TEXTAREAS (long-form questions like "Why do you want this job?")
+          const textareas = modal.querySelectorAll('textarea');
+          for (let ta of textareas) {
+            if (ta.value && ta.value.trim()) continue; // already filled
+            let labelText = '';
+            labelText += ' ' + (ta.getAttribute('aria-label') || '');
+            labelText += ' ' + (ta.getAttribute('name') || '');
+            const taId = ta.getAttribute('id');
+            if (taId) {
+              const labelEl = modal.querySelector(`label[for="${taId}"]`);
+              if (labelEl) labelText += ' ' + labelEl.textContent;
+            }
+            const parentLabel = ta.closest('label');
+            if (parentLabel) labelText += ' ' + parentLabel.textContent;
+
+            const cleanQuestion = labelText.replace(/\s+/g, ' ').trim();
+            if (!cleanQuestion) {
+              log(`⚠️ Textarea has no label, skipping (id=${ta.id || 'none'})`);
+              continue;
+            }
+            if (!config?.aiEnabled) {
+              log(`⚠️ Textarea found but AI is OFF — enable "AI Assistance" in Settings: "${cleanQuestion.substring(0, 60)}"`);
+              continue;
+            }
+            log(`🔎 Textarea question, asking AI: "${cleanQuestion.substring(0, 60)}"`);
+            const aiAnswer = await askLLM(cleanQuestion, 'textarea', []);
+            if (aiAnswer) {
+              fill(ta, aiAnswer);
+              log(`✏️ AI filled textarea "${cleanQuestion.substring(0, 40)}"`);
+            } else {
+              log(`❌ AI returned no answer for textarea "${cleanQuestion.substring(0, 60)}"`);
             }
           }
 
@@ -1184,6 +1460,34 @@ async function mainLoop() {
               }
             }
 
+            // AI FALLBACK: ask LLM to pick the right option label
+            if (!answered) {
+              const radioOptions = Array.from(radioInputs).map(r => {
+                const lab = fieldset.querySelector(`label[for="${r.id}"]`);
+                return (lab ? lab.textContent : r.value || '').trim();
+              }).filter(t => t);
+
+              if (radioOptions.length > 0) {
+                const cleanQuestion = (questionLabel?.textContent || '').replace(/\s+/g, ' ').trim();
+                const aiAnswer = await askLLM(cleanQuestion, 'radio', radioOptions);
+                if (aiAnswer) {
+                  const aiLower = aiAnswer.toLowerCase().trim();
+                  for (let radio of radioInputs) {
+                    const lab = fieldset.querySelector(`label[for="${radio.id}"]`);
+                    const labText = (lab ? lab.textContent : '').trim().toLowerCase();
+                    if (labText === aiLower || labText.includes(aiLower) || aiLower.includes(labText)) {
+                      if (!radio.checked) {
+                        lab ? lab.click() : radio.click();
+                        log(`🤖 Radio AI-picked "${labText}" for: ${cleanQuestion.substring(0, 30)}`);
+                        answered = true;
+                      }
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+
             // If no specific answer found, look for "Yes" as default (backward compatibility)
             if (!answered) {
               for (let radio of radioInputs) {
@@ -1268,6 +1572,25 @@ async function mainLoop() {
               log(`Dropdown language: ${selectedOption ? selectedOption.text : 'fallback'}`);
             }
 
+            // AI FALLBACK: ask LLM to choose
+            if (!selectedOption && options.length > 1) {
+              const optionTexts = options.map(o => o.text.trim()).filter(t => t && !/^(select|choose|choisir|please)/i.test(t));
+              const cleanQuestion = labelText.replace(/\s+/g, ' ').trim();
+              if (optionTexts.length > 0 && cleanQuestion) {
+                const aiAnswer = await askLLM(cleanQuestion, 'select', optionTexts);
+                if (aiAnswer) {
+                  const aiLower = aiAnswer.toLowerCase().trim();
+                  selectedOption = options.find(o => {
+                    const t = o.text.toLowerCase().trim();
+                    return t === aiLower || t.includes(aiLower) || aiLower.includes(t);
+                  });
+                  if (selectedOption) {
+                    log(`🤖 Select AI-picked "${selectedOption.text}" for: ${cleanQuestion.substring(0, 30)}`);
+                  }
+                }
+              }
+            }
+
             // Si pas trouvé, prendre option 1 (pas 0 car souvent "Select...")
             if (!selectedOption && options.length > 1) {
               selectedOption = options[1];
@@ -1339,6 +1662,27 @@ async function mainLoop() {
                   log(`Custom dropdown language: ${selectedOption ? selectedOption.textContent.substring(0, 30) : 'fallback'}`);
                 }
 
+                // AI FALLBACK: let LLM pick best option from the list
+                if (!selectedOption) {
+                  const optionTexts = options
+                    .map(o => o.textContent.trim())
+                    .filter(t => t && !/^(select|choose|choisir|please)/i.test(t));
+                  const cleanQuestion = questionText.replace(/\s+/g, ' ').trim();
+                  if (optionTexts.length > 0 && cleanQuestion) {
+                    const aiAnswer = await askLLM(cleanQuestion, 'select', optionTexts);
+                    if (aiAnswer) {
+                      const aiLower = aiAnswer.toLowerCase().trim();
+                      selectedOption = options.find(o => {
+                        const t = o.textContent.toLowerCase().trim();
+                        return t === aiLower || t.includes(aiLower) || aiLower.includes(t);
+                      });
+                      if (selectedOption) {
+                        log(`🤖 Custom dropdown AI-picked "${selectedOption.textContent.trim().substring(0, 30)}" for: ${cleanQuestion.substring(0, 30)}`);
+                      }
+                    }
+                  }
+                }
+
                 // If no smart match, take first valid option (not "Select...")
                 if (!selectedOption) {
                   selectedOption = options.find(opt =>
@@ -1359,20 +1703,15 @@ async function mainLoop() {
 
           await wait(1500);
 
-          // Chercher bouton Next ou Submit
-          const nextBtn = Array.from(modal.querySelectorAll('button')).find(btn => {
-            const text = btn.textContent.toLowerCase();
-            return text.includes('next') || text.includes('suivant') ||
-                   text.includes('review') || text.includes('submit') || text.includes('soumettre');
-          });
-
-          if (!nextBtn) {
+          // Locale-independent: detect primary step button via LinkedIn's
+          // internal data-attrs (not translated) with text fallback.
+          const stepBtn = findModalStepButton(modal);
+          if (!stepBtn) {
             log('Pas de bouton trouvé');
             break;
           }
-
-          const isSubmit = nextBtn.textContent.toLowerCase().includes('submit') ||
-                          nextBtn.textContent.toLowerCase().includes('soumettre');
+          const nextBtn = stepBtn.btn;
+          const isSubmit = stepBtn.type === 'submit';
 
           // IMPORTANT: Unfollow AVANT de cliquer Submit (Python ligne 1974)
           if (isSubmit) {
@@ -1407,73 +1746,72 @@ async function mainLoop() {
             await wait(500);
           }
 
-          // Vérifier que le bouton n'est pas disabled
+          // Vérifier que le bouton n'est pas disabled — RETRY rather than instant discard
           if (nextBtn.disabled || nextBtn.getAttribute('aria-disabled') === 'true') {
-            log('⚠️ Button disabled, checking for stuck scenario...');
+            disabledRetries++;
+            log(`⚠️ Next button disabled (retry ${disabledRetries}/${MAX_DISABLED_RETRIES}) on step ${step}`);
 
-            // If button stays disabled for too long = stuck
-            if (step > 2) {
-              log('❌ STUCK: Button remains disabled after multiple attempts');
-              log('⚠️ Probably validation error - DISCARDING');
-
+            if (disabledRetries >= MAX_DISABLED_RETRIES) {
+              log('❌ Next button still disabled after all retries — DISCARDING');
+              log('   Likely cause: a required field could not be filled. Check AI settings / API key / model.');
               await discardApplication();
               skippedCount++;
               updateSkippedCount();
               break;
             }
 
-            await wait(1000);
+            // Wait longer + give the fill pass another chance (loop continues, fills again)
+            await wait(2000);
+            updateActivity();
             continue;
           }
+          disabledRetries = 0; // reset on successful click attempt
 
           await click(nextBtn);
 
           // Attendre que la page change
           await wait(1000); // Optimized page change wait
 
-          // Vérifier si vraiment passé à l'étape suivante
+          // Vérifier si vraiment passé à l'étape suivante (post-click validation)
           const stillSameModal = document.querySelector('.jobs-easy-apply-modal');
           if (stillSameModal && !isSubmit) {
-            // Vérifier si une erreur est affichée (validation failed)
             const errorMessages = [
               '[role="alert"]',
               '.artdeco-inline-feedback--error',
               '.fb-form-element-label__error'
             ];
 
+            let postClickErrorSeen = false;
+            let postClickErrorText = '';
             for (let selector of errorMessages) {
               const errors = stillSameModal.querySelectorAll(selector);
               for (let error of errors) {
-                if (error.offsetParent !== null) { // Visible
-                  const errorText = error.textContent.toLowerCase();
-
-                  // Check for validation errors
-                  if (errorText.includes('please enter') ||
-                      errorText.includes('valid answer') ||
-                      errorText.includes('required') ||
-                      errorText.includes('must be') ||
-                      errorText.includes('invalid') ||
-                      errorText.includes('veuillez') ||
-                      errorText.includes('requis')) {
-
-                    log(`❌ VALIDATION ERROR: ${error.textContent.substring(0, 60)}`);
-                    log('⚠️ Cannot fix validation error - DISCARDING application');
-
-                    await discardApplication();
-                    skippedCount++;
-                    updateSkippedCount();
-
-                    // Break out of step loop
-                    step = 999;
-                    break;
-                  }
+                if (error.offsetParent !== null && error.textContent.trim()) {
+                  // Locale-independent: presence of a visible error element
+                  // is the signal; text content varies by UI language.
+                  postClickErrorSeen = true;
+                  postClickErrorText = error.textContent.substring(0, 60);
+                  break;
                 }
               }
-              if (step === 999) break;
+              if (postClickErrorSeen) break;
             }
 
-            // If we're discarding, break out
-            if (step === 999) break;
+            if (postClickErrorSeen) {
+              validationRetries++;
+              log(`⚠️ Post-click validation error (retry ${validationRetries}/${MAX_VALIDATION_RETRIES}): ${postClickErrorText}`);
+              if (validationRetries >= MAX_VALIDATION_RETRIES) {
+                log('❌ Validation error persists after retries — DISCARDING');
+                await discardApplication();
+                skippedCount++;
+                updateSkippedCount();
+                step = 999;
+                break;
+              }
+              // Don't break — let next iteration's fill pass try again
+              await wait(1500);
+              continue;
+            }
           }
 
           if (isSubmit) {
@@ -1651,11 +1989,49 @@ async function mainLoop() {
         }
       }
 
+      // METHOD 4: Newer LinkedIn — .artdeco-pagination wrapper
+      if (!nextPageClicked) {
+        const artdecoNext = document.querySelector(
+          'button.artdeco-pagination__button--next, ' +
+          '.artdeco-pagination button[aria-label*="Next"], ' +
+          '.artdeco-pagination button[aria-label*="next"], ' +
+          '.artdeco-pagination button[aria-label*="suivant"]'
+        );
+        if (artdecoNext && artdecoNext.offsetParent !== null && !artdecoNext.disabled) {
+          log('✅ Clique sur bouton Next (.artdeco-pagination)');
+          await click(artdecoNext);
+          await wait(1500);
+          nextPageClicked = true;
+        }
+      }
+
+      // METHOD 5: Last resort — scroll the results list to trigger infinite-scroll loading
+      if (!nextPageClicked) {
+        log('🔍 No pagination found, trying infinite scroll on results list...');
+        const beforeCount = document.querySelectorAll('li[data-occludable-job-id], li.scaffold-layout__list-item, div.job-card-container').length;
+        const scrollContainer =
+          document.querySelector('.jobs-search-results-list, .scaffold-layout__list-container, .jobs-search-results__list, main') ||
+          document.scrollingElement;
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          window.scrollTo(0, document.body.scrollHeight);
+          await wait(2500);
+          const afterCount = document.querySelectorAll('li[data-occludable-job-id], li.scaffold-layout__list-item, div.job-card-container').length;
+          if (afterCount > beforeCount) {
+            log(`✅ Infinite scroll loaded ${afterCount - beforeCount} more jobs (total: ${afterCount})`);
+            nextPageClicked = true;
+          }
+        }
+      }
+
       if (nextPageClicked) {
         log('✅ Passage à la page suivante réussi');
+        updateActivity();
         continue;
       } else {
         log('📋 Fin des pages - Aucune page suivante trouvée');
+        log(`   Final URL: ${location.href}`);
+        log(`   Tip: if there were more jobs you expected, LinkedIn may have changed pagination DOM; report this log.`);
         break;
       }
 
@@ -1689,6 +2065,285 @@ function shouldSkipByBlacklist(title, company, description, blacklistKeywords) {
   }
 
   return false;
+}
+
+// Collect the human-readable question label for an input/textarea/select.
+function _collectLabelFor(el, modal) {
+  let labelText = '';
+  labelText += ' ' + (el.getAttribute('aria-label') || '');
+  labelText += ' ' + (el.getAttribute('name') || '');
+  const id = el.getAttribute('id');
+  if (id) {
+    const labelEl = modal.querySelector(`label[for="${id}"]`);
+    if (labelEl) labelText += ' ' + labelEl.textContent;
+  }
+  const parentLabel = el.closest('label');
+  if (parentLabel) labelText += ' ' + parentLabel.textContent;
+  return labelText.replace(/\s+/g, ' ').trim();
+}
+
+// Detect numeric-intent for an input (even when type=text)
+function _detectNumericIntent(input, cleanQuestion) {
+  return input.type === 'number' ||
+         input.getAttribute('inputmode') === 'numeric' ||
+         /\b(numeric|number)\b/.test(input.getAttribute('pattern') || '') ||
+         /(whole\s+number|how\s+many|how\s+much|number\s+between|enter\s+a\s+number|years?\b|nombre|combien|cuántos|wieviel|quanti)/i.test(cleanQuestion);
+}
+
+// Build the min/max suffix appended to the question for numeric fields
+function _detectRangeSuffix(input, cleanQuestion) {
+  const rangeMatch = cleanQuestion.match(/between\s+(\d+)\s+and\s+(\d+)/i);
+  if (rangeMatch) return ` Answer must be between ${rangeMatch[1]} and ${rangeMatch[2]}.`;
+  const minAttr = input.getAttribute('min');
+  const maxAttr = input.getAttribute('max');
+  if (minAttr || maxAttr) return ` Answer must be between ${minAttr || 0} and ${maxAttr || 99}.`;
+  return '';
+}
+
+// Return true if question matches one of the hardcoded fast-path rules (no AI needed)
+function _matchesHardcodedRule(cleanQuestion) {
+  const label = cleanQuestion.toLowerCase();
+  if (label.match(/(years?|yrs?|années?|años|jahre|anni)\b/) && !label.match(/with|in|of|avec|en|dans|with the|with our/)) return true;
+  if (label.match(/salary|compensation|remuneration|salaire|rémunération|sueldo|salario|gehalt|stipendio/)) return true;
+  if (label.match(/email|e-mail|courriel|correo/)) return true;
+  if (label.match(/first|prénom|prenom|nombre|vorname|nome/)) return true;
+  if (label.match(/last|nom|apellido|nachname|cognome/)) return true;
+  if (label.match(/phone|téléphone|telefono|telefon|mobile|portable|cell|móvil|cellulare/)) return true;
+  if (label.match(/city|ville|ciudad|stadt|città|location|localisation|ubicación|standort/)) return true;
+  return false;
+}
+
+// PREFETCH: walk the modal and batch-ask LLM for all AI-needed answers BEFORE the fill pass.
+// Populates the per-question cache so the fill pass becomes free cache hits = 1 API call total per step.
+async function prefetchAIQuestions(modal) {
+  if (!config?.aiEnabled) return;
+  if (!modal) return;
+  const items = [];
+
+  // Text/number/tel/email inputs (skip those handled by hardcoded rules)
+  const textInputs = modal.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="email"]');
+  for (const input of textInputs) {
+    if (input.value && input.value.trim()) continue;
+    const cleanQuestion = _collectLabelFor(input, modal);
+    if (!cleanQuestion) continue;
+    if (_matchesHardcodedRule(cleanQuestion)) continue;
+    const isNumeric = _detectNumericIntent(input, cleanQuestion);
+    const minMax = isNumeric ? _detectRangeSuffix(input, cleanQuestion) : '';
+    items.push({
+      question: cleanQuestion + minMax,
+      fieldType: isNumeric ? 'number' : 'text',
+      options: []
+    });
+  }
+
+  // Textareas (always AI-needed)
+  const textareas = modal.querySelectorAll('textarea');
+  for (const ta of textareas) {
+    if (ta.value && ta.value.trim()) continue;
+    const cleanQuestion = _collectLabelFor(ta, modal);
+    if (!cleanQuestion) continue;
+    items.push({ question: cleanQuestion, fieldType: 'textarea', options: [] });
+  }
+
+  // Radios — fallback when hardcoded keyword rules don't match
+  const radioFieldsets = modal.querySelectorAll('fieldset[data-test-form-builder-radio-button-form-component]');
+  for (const fs of radioFieldsets) {
+    const radioInputs = fs.querySelectorAll('input[type="radio"]');
+    // Skip if any radio already selected
+    if (Array.from(radioInputs).some(r => r.checked)) continue;
+    const questionLabel = fs.querySelector('legend, span[class*="title"]');
+    const qText = questionLabel ? questionLabel.textContent.toLowerCase() : '';
+    if (!qText) continue;
+    // Skip if hardcoded rule will handle (visa, work auth, relocate, clearance, license)
+    if (qText.match(/visa|sponsor|sponsorship|author|legal.*work|permit.*work|eligib.*work|right.*work|relocat|move.*locat|willing.*move|security.*clearance|clearance|driver.*license|driving.*license|valid.*license/i)) continue;
+    const optTexts = Array.from(radioInputs).map(r => {
+      const lab = fs.querySelector(`label[for="${r.id}"]`);
+      return (lab ? lab.textContent : r.value || '').trim();
+    }).filter(t => t);
+    if (optTexts.length === 0) continue;
+    items.push({ question: questionLabel.textContent.replace(/\s+/g, ' ').trim(), fieldType: 'radio', options: optTexts });
+  }
+
+  // Native <select> dropdowns — skip if hardcoded language rule will handle
+  const selects = modal.querySelectorAll('select');
+  for (const sel of selects) {
+    if (sel.selectedIndex > 0) continue;
+    const cleanQuestion = _collectLabelFor(sel, modal);
+    if (!cleanQuestion) continue;
+    const ql = cleanQuestion.toLowerCase();
+    if (ql.match(/proficiency|level.*english|level.*french|level.*spanish|level.*german|niveau.*anglais|niveau.*français|nivel.*inglés|english|anglais|language|langue|french|français|spanish|español|german|deutsch/)) continue;
+    const optTexts = Array.from(sel.options).map(o => o.text.trim()).filter(t => t && !/^(select|choose|choisir|please)/i.test(t));
+    if (optTexts.length === 0) continue;
+    items.push({ question: cleanQuestion, fieldType: 'select', options: optTexts });
+  }
+
+  if (items.length === 0) return;
+
+  log(`🚀 Prefetching ${items.length} AI answers in 1 batched call (saves ${items.length - 1} requests)`);
+  updateActivity();
+  const ticker = setInterval(() => updateActivity(), 5000);
+
+  try {
+    const resp = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'askLLMBatch', items }, (r) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(r);
+        }
+      });
+      // Generous timeout for batch (model has to write all answers)
+      setTimeout(() => resolve({ ok: false, error: 'batch timeout' }), 90000);
+    });
+    updateActivity();
+    if (resp?.ok) {
+      log(`✅ Batch prefetched: ${resp.prefetched} new, ${resp.fromCache} from cache, ${resp.skipped} skipped`);
+    } else {
+      log(`⚠️ Batch prefetch failed (${resp?.error}) — will fall through to per-field calls`);
+    }
+  } catch (err) {
+    log(`⚠️ Batch prefetch exception: ${err.message}`);
+  } finally {
+    clearInterval(ticker);
+  }
+}
+
+// Ask the AI fallback (OpenRouter via background) for a field answer.
+// Returns the answer string, or null on disabled/error.
+// fieldType: 'text' | 'textarea' | 'number' | 'radio' | 'select'
+// options: array of strings (for radio/select). Ignored for text/textarea/number.
+async function askLLM(question, fieldType, options) {
+  if (!config?.aiEnabled) return null;
+  if (!question || !question.trim()) return null;
+
+  // Tick activity to prevent stuck-watchdog from firing during LLM wait
+  updateActivity();
+  // Also tick periodically while waiting (LLM can take 10-20s)
+  const ticker = setInterval(() => updateActivity(), 5000);
+
+  try {
+    const resp = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { action: 'askLLM', question, fieldType, options: options || [] },
+        (r) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(r);
+          }
+        }
+      );
+      // Hard timeout safety net (LLM should respond in 5-15s)
+      setTimeout(() => resolve({ ok: false, error: 'timeout' }), 30000);
+    });
+
+    updateActivity(); // tick again after response
+
+    if (resp?.ok && resp.answer) {
+      log(`🤖 AI ${resp.fromCache ? '(cached)' : ''} answered "${question.substring(0, 50)}" → "${(resp.answer || '').substring(0, 50)}"`);
+      return resp.answer;
+    }
+    if (resp?.ok && !resp.answer) {
+      log(`⚠️ AI returned empty answer for "${question.substring(0, 50)}" — leaving blank`);
+      return null;
+    }
+    log(`⚠️ AI fallback failed: ${resp?.error || 'unknown'}`);
+    return null;
+  } catch (err) {
+    log(`⚠️ AI fallback exception: ${err.message}`);
+    return null;
+  } finally {
+    clearInterval(ticker);
+  }
+}
+
+// Whitelist: skip job if its title does NOT contain at least one whitelist keyword.
+// Empty/missing whitelist = disabled (apply to all that pass blacklist).
+function shouldSkipByWhitelist(title, whitelistKeywords) {
+  if (!whitelistKeywords || whitelistKeywords.trim() === '') return false;
+
+  const keywords = whitelistKeywords.toLowerCase().split(',').map(k => k.trim()).filter(k => k);
+  if (keywords.length === 0) return false;
+
+  const titleLower = (title || '').toLowerCase();
+  // Title extraction failed entirely — let it through rather than skip everything.
+  // The pipeline still has blacklist + Easy Apply detection to filter junk.
+  if (!titleLower) {
+    log(`⚠️ Whitelist check: title empty, allowing job through (extraction failed for this card layout)`);
+    return false;
+  }
+
+  const hit = keywords.some(k => titleLower.includes(k));
+  if (!hit) {
+    log(`⏭️ Skip (Whitelist): no match in title "${title.substring(0, 60)}"`);
+    log(`   Wanted any of: ${keywords.join(', ')}`);
+    return true;
+  }
+  return false;
+}
+
+// Broad title extraction — tries multiple selectors + falls back to aria-label parsing
+function extractJobTitle(jobCard) {
+  // Selector cascade
+  const titleSelectors = [
+    '.job-card-list__title',
+    '.job-card-list__title--link',
+    '.artdeco-entity-lockup__title a',
+    '.artdeco-entity-lockup__title',
+    '.job-card-container__link strong',
+    '.job-card-container__link',
+    'a[class*="job-card"] strong',
+    'a.job-card-list__title',
+    'a[data-control-name="job_card_click"]'
+  ];
+  for (const sel of titleSelectors) {
+    const el = jobCard.querySelector(sel);
+    const text = el?.textContent?.trim();
+    if (text) return text;
+    // aria-label sometimes carries the title even when textContent is empty
+    const aria = el?.getAttribute?.('aria-label')?.trim();
+    if (aria) return aria.split(/\s+at\s+|\s+chez\s+/i)[0].trim();
+  }
+  // Last resort: any anchor pointing at /jobs/view/
+  const anchor = jobCard.querySelector('a[href*="/jobs/view/"]');
+  if (anchor) {
+    const aria = anchor.getAttribute('aria-label')?.trim();
+    if (aria) {
+      // LinkedIn often uses "View [Title] at [Company]" or just "[Title]"
+      const cleaned = aria.replace(/^view\s+/i, '').split(/\s+at\s+|\s+chez\s+/i)[0].trim();
+      if (cleaned) return cleaned;
+    }
+    const txt = anchor.textContent?.trim();
+    if (txt) return txt.split('\n')[0].trim();
+  }
+  return '';
+}
+
+function extractJobCompany(jobCard) {
+  const selectors = [
+    '.job-card-container__primary-description',
+    '.artdeco-entity-lockup__subtitle',
+    '.artdeco-entity-lockup__caption',
+    '.job-card-container__company-name'
+  ];
+  for (const sel of selectors) {
+    const t = jobCard.querySelector(sel)?.textContent?.trim();
+    if (t) return t;
+  }
+  return '';
+}
+
+function extractJobDescription(jobCard) {
+  const selectors = [
+    '.job-card-container__metadata-item',
+    '.job-card-list__insight',
+    '.job-card-container__metadata-wrapper'
+  ];
+  for (const sel of selectors) {
+    const t = jobCard.querySelector(sel)?.textContent?.trim();
+    if (t) return t;
+  }
+  return '';
 }
 
 // Extraire années d'expérience requises du texte (multilingue)
@@ -1843,7 +2498,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         config = await chrome.storage.sync.get([
           'firstName', 'lastName', 'email', 'phone', 'phoneCountryCode',
           'yearsOfExperience', 'maxYearsRequired', 'blacklistKeywords', 'city', 'country', 'expectedSalary',
-          'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense'
+          'visaSponsorship', 'legallyAuthorized', 'willingToRelocate', 'driversLicense',
+          'whitelistKeywords', 'aiEnabled', 'openrouterApiKey', 'openrouterModel'
         ]);
 
         // Charger les compteurs depuis storage
