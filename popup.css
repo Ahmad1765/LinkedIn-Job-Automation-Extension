@@ -1125,3 +1125,165 @@ small {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--primary-light);
 }
+
+/* ═══════════════════════════════════════════════
+   GITHUB INTEGRATION STYLES
+═══════════════════════════════════════════════ */
+
+/* PAT input row */
+.pat-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pat-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Small button variant */
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  height: 30px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-icon {
+  background: none;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.btn-icon:hover { background: #f3f4f6; }
+.btn-link {
+  background: none;
+  border: none;
+  color: #0a66c2;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  text-decoration: underline;
+}
+.btn-link:hover { color: #004182; }
+
+/* Connection status badge */
+.github-status {
+  display: block;
+  font-size: 12px;
+  margin-top: 5px;
+  font-weight: 500;
+}
+.github-status.connected    { color: #16a34a; }
+.github-status.disconnected { color: #6b7280; }
+.github-status.error        { color: #dc2626; }
+
+/* Repo action buttons row */
+.github-repo-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* Progress bar */
+.github-progress {
+  margin-bottom: 8px;
+}
+.github-progress-bar-track {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.github-progress-bar {
+  height: 100%;
+  background: #0a66c2;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.github-progress-text {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* Repo list */
+.github-repo-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 4px;
+  margin-bottom: 6px;
+  background: #fafafa;
+}
+.github-repo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.github-repo-item:hover { background: #f0f2f5; }
+.github-repo-item.is-fork { opacity: 0.55; }
+.github-repo-check { flex-shrink: 0; cursor: pointer; }
+.github-repo-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.github-repo-name em { font-style: italic; color: #9ca3af; font-size: 11px; }
+.github-repo-meta { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.github-lang  { color: #6b7280; font-size: 11px; }
+.github-stars { color: #f59e0b; font-size: 11px; }
+
+/* Repo controls (select all / deselect all) */
+.github-repo-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* Last CV row */
+.github-last-cv {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #374151;
+}
+.github-last-cv button {
+  background: none;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.github-last-cv button:hover { background: #f3f4f6; }
+
+/* Muted text */
+.github-muted { font-size: 11px; color: #9ca3af; }
+
+/* No repos message */
+.github-no-repos {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 12px;
+}
+
+/* Section headers within tabs */
+.section-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 14px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e5e7eb;
+}
