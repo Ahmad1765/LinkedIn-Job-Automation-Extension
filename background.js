@@ -431,7 +431,7 @@ async function handleGithubFetchRepoDetails(pat, fullName) {
   };
 }
 
-async function handleGenerateTailoredCV({ jobDesc, githubProjects, profile }) {
+async function handleGenerateTailoredCV({ jobDesc, githubProjects, profile = {} }) {
   const cfg = await chrome.storage.sync.get(['openrouterApiKey', 'openrouterModel']);
   if (!cfg.openrouterApiKey || !cfg.openrouterApiKey.trim()) {
     throw new Error('OpenRouter API key not set');
@@ -517,7 +517,12 @@ ${projectSummaries || '(none provided — generate skills-only CV)'}`;
 
   // Strip accidental markdown fences before parsing
   const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  const cvJson = JSON.parse(jsonStr);
+  let cvJson;
+  try {
+    cvJson = JSON.parse(jsonStr);
+  } catch (e) {
+    throw new Error(`LLM returned non-JSON: ${jsonStr.substring(0, 200)}`);
+  }
   return { ok: true, cvJson };
 }
 
