@@ -215,54 +215,156 @@ const COOLDOWN_STEPS_MS = [90000, 180000, 360000]; // 90s, 3min, 6min
 const COOLDOWN_MAX_RETRIES = COOLDOWN_STEPS_MS.length;
 const COOLDOWN_STALE_MS = 30 * 60 * 1000; // ignore stored cooldown older than 30min
 
-// Throttle phrases (multilingual where it's cheap). Daily-limit phrases stay in
-// checkDailyLimit() — those must keep stopping the bot, not refresh-and-resume.
+// Throttle phrases. Daily-limit phrases stay in checkDailyLimit() — those must
+// keep stopping the bot, not refresh-and-resume.
+//
+// PRIMARY phrases are short, distinctive substrings of LinkedIn's actual
+// throttle dialog. The full English message LinkedIn shows is:
+//
+//   "We noticed you're applying at a fast pace. To ensure genuine applications
+//    get the attention they deserve, we've briefly paused LinkedIn Apply as a
+//    safeguard against automated inauthentic activities. You can continue
+//    shortly. Using third-party automation tools may put your account at risk
+//    of restriction."
+//
+// Matching shorter substrings makes detection resilient to LinkedIn wording
+// tweaks. Each phrase is checked case-insensitively.
 const THROTTLE_PATTERNS = [
+  // Exact LinkedIn dialog wording (English)
+  "applying at a fast pace",
+  "briefly paused linkedin apply",
+  "briefly paused linkedin",
+  "safeguard against automated inauthentic",
+  "automated inauthentic activities",
+  "you can continue shortly",
+  "third-party automation tools",
+  "account at risk of restriction",
+  // Older / variant LinkedIn wording
   "applying too quickly",
   "you're applying too fast",
   "you are applying too fast",
   "please slow down",
+  "you're applying too frequently",
   "slow down",
   "try again later",
+  "try again in a few",
   "temporarily restricted",
   "temporarily blocked",
+  "temporarily paused",
   "too many requests",
-  "try again in a few",
+  // Multilingual variants for non-English LinkedIn accounts
+  "rythme rapide",                 // FR — "fast pace"
   "candidatures trop rapides",     // FR
   "ralentissez",                   // FR
   "réessayer plus tard",           // FR
   "demasiado rápido",              // ES
+  "ritmo acelerado",               // ES — "fast pace"
   "intenta de nuevo más tarde",    // ES
   "zu schnell",                    // DE
+  "schnellen tempo",               // DE
   "später erneut versuchen"        // DE
 ];
 
+// Selectors where LinkedIn surfaces the throttle banner. Modal/dialog roles
+// come first because the new throttle dialog is rendered as an artdeco modal
+// with a "Got it" / "Dismiss" button — we must catch this even when body text
+// is masked by the overlay backdrop.
+const THROTTLE_NOTICE_SELECTORS = [
+  '.artdeco-modal__content',
+  '.artdeco-modal',
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '.artdeco-inline-feedback',
+  '.artdeco-toast-item',
+  '.artdeco-toasts',
+  '.jobs-apply-button + *',
+  '.jobs-s-apply',
+  'main'
+];
+
+// Match a single haystack against the throttle pattern list (case-insensitive).
+function matchThrottle(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  for (const phrase of THROTTLE_PATTERNS) {
+    if (lower.includes(phrase)) return phrase;
+  }
+  return null;
+}
+
 function checkRateLimitBlock() {
   try {
-    const bodyText = (document.body.innerText || '').toLowerCase();
-    for (const phrase of THROTTLE_PATTERNS) {
-      if (bodyText.includes(phrase)) {
-        return { blocked: true, reason: `phrase:${phrase}` };
-      }
+    // 1. Body text — fastest path; catches inline banners and dialog text
+    //    when nothing covers the document.
+    const bodyMatch = matchThrottle(document.body && document.body.innerText);
+    if (bodyMatch) {
+      return { blocked: true, reason: `body:${bodyMatch}` };
     }
-    // Also check the artdeco toast/inline-feedback containers (LinkedIn surfaces
-    // throttles there even when body text is masked by overlays).
-    const noticeEls = document.querySelectorAll(
-      '.artdeco-inline-feedback, .artdeco-toast-item, .artdeco-modal__content'
-    );
-    for (const el of noticeEls) {
-      const t = (el.textContent || '').toLowerCase();
-      for (const phrase of THROTTLE_PATTERNS) {
-        if (t.includes(phrase)) {
-          return { blocked: true, reason: `notice:${phrase}` };
+
+    // 2. Walk the known notice containers. Catches cases where an overlay
+    //    backdrop masks document.body.innerText but the dialog text is still
+    //    in the DOM.
+    for (const sel of THROTTLE_NOTICE_SELECTORS) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        const m = matchThrottle(el.textContent);
+        if (m) {
+          return { blocked: true, reason: `${sel}:${m}` };
         }
       }
     }
+
+    // 3. Heuristic: the Easy Apply button is present on the job detail panel
+    //    but disabled. LinkedIn sometimes greys the button without surfacing
+    //    a text message. Only flag this as a throttle if we *also* see a
+    //    cue in any modal/dialog or toast — otherwise it's just an unsupported
+    //    job (external apply, already applied, etc).
+    const applyBtn = document.querySelector('button.jobs-apply-button');
+    if (applyBtn && applyBtn.disabled) {
+      const overlayText = (
+        document.querySelector('[role="dialog"], .artdeco-modal, .artdeco-toast-item')?.textContent || ''
+      ).toLowerCase();
+      if (
+        overlayText.includes('pause') ||
+        overlayText.includes('continue shortly') ||
+        overlayText.includes('fast pace') ||
+        overlayText.includes('safeguard')
+      ) {
+        return { blocked: true, reason: 'disabled-apply-button+dialog-cue' };
+      }
+    }
+
     return { blocked: false };
   } catch (error) {
     log(`⚠️ checkRateLimitBlock error: ${error.message}`);
     return { blocked: false };
   }
+}
+
+// Best-effort: dismiss the throttle dialog before reloading. Helps keep the
+// reload sequence clean (no lingering modal on the next page paint).
+async function dismissThrottleDialog() {
+  try {
+    const dialog = document.querySelector('[role="dialog"], .artdeco-modal');
+    if (!dialog || dialog.offsetParent === null) return false;
+    const text = (dialog.textContent || '').toLowerCase();
+    if (!matchThrottle(text)) return false;
+
+    const dismiss =
+      dialog.querySelector('button.artdeco-modal__dismiss') ||
+      dialog.querySelector('button[aria-label*="Dismiss" i]') ||
+      dialog.querySelector('button[aria-label*="Close" i]') ||
+      // "Got it" / primary button at the bottom of the throttle dialog
+      dialog.querySelector('.artdeco-modal__actionbar button.artdeco-button--primary') ||
+      dialog.querySelector('footer button.artdeco-button--primary');
+
+    if (dismiss) {
+      try { dismiss.click(); } catch (_) {}
+      await wait(400);
+      return true;
+    }
+  } catch (_) {}
+  return false;
 }
 
 // Stash resume state and reload. The init IIFE at the bottom of this file picks
@@ -331,6 +433,9 @@ async function triggerCooldownAndRefresh(reason) {
         reason
       });
     } catch (_) {}
+
+    // Best-effort: close the throttle dialog if one is open. Cleaner reload.
+    await dismissThrottleDialog();
 
     // Flip security flags off BEFORE reload so any racing code in flight stops.
     isRunning = false;
@@ -795,6 +900,18 @@ async function mainLoop() {
 
   while (isRunning) {
     try {
+      // 🆕 PRE-FLIGHT: Temporary throttle? LinkedIn surfaces the throttle
+      // dialog at the page level (not only after an Easy Apply click), so we
+      // check at the top of every iteration before doing any work.
+      {
+        const throttle = checkRateLimitBlock();
+        if (throttle.blocked) {
+          log(`⏸️  Throttle detected (pre-flight) — ${throttle.reason}`);
+          await triggerCooldownAndRefresh(throttle.reason);
+          return;
+        }
+      }
+
       // 🆕 CHECK: Daily limit reached?
       if (checkDailyLimit()) {
         log('⛔ Stopping bot: Daily limit reached');
@@ -951,6 +1068,17 @@ async function mainLoop() {
           await wait(600); // Ultra optimized job link wait
         }
 
+        // CHECK: Throttle on the job-detail panel (banner can appear after
+        // navigating to a job without an Easy Apply click).
+        {
+          const throttle = checkRateLimitBlock();
+          if (throttle.blocked) {
+            log(`⏸️  Throttle detected on job panel — ${throttle.reason}`);
+            await triggerCooldownAndRefresh(throttle.reason);
+            return;
+          }
+        }
+
         // Easy Apply — locale-independent: button.jobs-apply-button without
         // a link-external icon. LinkedIn translates the aria-label per account
         // language, so text matching breaks for non-English users.
@@ -961,6 +1089,16 @@ async function mainLoop() {
           skippedCount++;
           updateSkippedCount();
           continue;
+        }
+
+        // If LinkedIn rendered the Easy Apply button as disabled, that's the
+        // strongest possible signal of a throttle. Trigger cooldown — do NOT
+        // click a disabled button (LinkedIn flags repeated disabled-clicks as
+        // automation).
+        if (easyApplyBtn.disabled || easyApplyBtn.getAttribute('aria-disabled') === 'true') {
+          log('⏸️  Easy Apply button is disabled — assuming throttle');
+          await triggerCooldownAndRefresh('easy-apply-button-disabled');
+          return;
         }
 
         await click(easyApplyBtn);
