@@ -204,6 +204,146 @@ function checkDailyLimit() {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Temporary throttle ("applying too quickly") — distinct from daily limit.
+// LinkedIn shows a transient block when the bot fires Easy Apply too fast.
+// Strategy: detect → store cooldown state → reload page → resume mainLoop
+// after waiting (handled by the init IIFE at the bottom of this file).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COOLDOWN_STEPS_MS = [90000, 180000, 360000]; // 90s, 3min, 6min
+const COOLDOWN_MAX_RETRIES = COOLDOWN_STEPS_MS.length;
+const COOLDOWN_STALE_MS = 30 * 60 * 1000; // ignore stored cooldown older than 30min
+
+// Throttle phrases (multilingual where it's cheap). Daily-limit phrases stay in
+// checkDailyLimit() — those must keep stopping the bot, not refresh-and-resume.
+const THROTTLE_PATTERNS = [
+  "applying too quickly",
+  "you're applying too fast",
+  "you are applying too fast",
+  "please slow down",
+  "slow down",
+  "try again later",
+  "temporarily restricted",
+  "temporarily blocked",
+  "too many requests",
+  "try again in a few",
+  "candidatures trop rapides",     // FR
+  "ralentissez",                   // FR
+  "réessayer plus tard",           // FR
+  "demasiado rápido",              // ES
+  "intenta de nuevo más tarde",    // ES
+  "zu schnell",                    // DE
+  "später erneut versuchen"        // DE
+];
+
+function checkRateLimitBlock() {
+  try {
+    const bodyText = (document.body.innerText || '').toLowerCase();
+    for (const phrase of THROTTLE_PATTERNS) {
+      if (bodyText.includes(phrase)) {
+        return { blocked: true, reason: `phrase:${phrase}` };
+      }
+    }
+    // Also check the artdeco toast/inline-feedback containers (LinkedIn surfaces
+    // throttles there even when body text is masked by overlays).
+    const noticeEls = document.querySelectorAll(
+      '.artdeco-inline-feedback, .artdeco-toast-item, .artdeco-modal__content'
+    );
+    for (const el of noticeEls) {
+      const t = (el.textContent || '').toLowerCase();
+      for (const phrase of THROTTLE_PATTERNS) {
+        if (t.includes(phrase)) {
+          return { blocked: true, reason: `notice:${phrase}` };
+        }
+      }
+    }
+    return { blocked: false };
+  } catch (error) {
+    log(`⚠️ checkRateLimitBlock error: ${error.message}`);
+    return { blocked: false };
+  }
+}
+
+// Stash resume state and reload. The init IIFE at the bottom of this file picks
+// up the flag, waits the remaining cooldown, then restarts mainLoop.
+async function triggerCooldownAndRefresh(reason) {
+  try {
+    const existing = await chrome.storage.local.get([
+      'cooldownRetries', 'cooldownStartTime'
+    ]);
+
+    // Reset retry counter if last cooldown is stale (clean session).
+    const lastStart = existing.cooldownStartTime || 0;
+    const stale = !lastStart || (Date.now() - lastStart) > COOLDOWN_STALE_MS;
+    const retries = stale ? 0 : (existing.cooldownRetries || 0);
+
+    if (retries >= COOLDOWN_MAX_RETRIES) {
+      log('🛑 Cooldown retries exhausted — stopping bot.');
+      log(`   Reason: ${reason} | retries: ${retries}/${COOLDOWN_MAX_RETRIES}`);
+      isRunning = false;
+      userExplicitlyClickedStart = false;
+      await chrome.storage.local.set({
+        isRunning: false,
+        cooldownPending: false,
+        cooldownRetries: 0
+      });
+      try {
+        chrome.runtime.sendMessage({
+          type: 'cooldownExhausted',
+          retries,
+          reason
+        });
+      } catch (_) {}
+      try {
+        alert(
+          `🛑 LinkedIn rate-limited the bot ${retries} times in a row.\n\n` +
+          `Detected: ${reason}\n\n` +
+          `Bot stopped. Wait a while (15-30 min) then click Start again.`
+        );
+      } catch (_) {}
+      return false;
+    }
+
+    const durationMs = COOLDOWN_STEPS_MS[retries];
+    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    log(`⏸️  RATE LIMIT DETECTED — entering cooldown`);
+    log(`   Reason: ${reason}`);
+    log(`   Cooldown: ${Math.round(durationMs / 1000)}s  (attempt ${retries + 1}/${COOLDOWN_MAX_RETRIES})`);
+    log('   Will refresh page and auto-resume after cooldown.');
+    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    await chrome.storage.local.set({
+      cooldownPending: true,
+      cooldownStartTime: Date.now(),
+      cooldownDuration: durationMs,
+      cooldownRetries: retries + 1,
+      cooldownReason: reason,
+      // Persist "was running" so we know to auto-resume after reload.
+      cooldownPrevRunning: true
+    });
+
+    try {
+      chrome.runtime.sendMessage({
+        type: 'cooldownStarted',
+        durationMs,
+        retries: retries + 1,
+        reason
+      });
+    } catch (_) {}
+
+    // Flip security flags off BEFORE reload so any racing code in flight stops.
+    isRunning = false;
+
+    // Hard reload — init IIFE handles resume.
+    location.reload();
+    return true;
+  } catch (error) {
+    log(`❌ triggerCooldownAndRefresh error: ${error.message}`);
+    return false;
+  }
+}
+
 // IMPROVED: Function to find and click Done button with exhaustive search
 async function findAndClickDoneButton(contextElement = document, contextName = 'page', maxAttempts = 15) {
   log(`🔍 [${contextName}] Starting exhaustive search for Done button...`);
@@ -840,6 +980,18 @@ async function mainLoop() {
           }
         }
 
+        // CHECK: Temporary throttle ("applying too quickly") — recoverable.
+        // Runs BEFORE daily-limit check because throttle phrases never overlap
+        // with daily-limit phrases, and throttle path refreshes instead of stopping.
+        {
+          const throttle = checkRateLimitBlock();
+          if (throttle.blocked) {
+            log(`⏸️  Throttle detected after Easy Apply click — ${throttle.reason}`);
+            await triggerCooldownAndRefresh(throttle.reason);
+            return; // location.reload() in flight; abort mainLoop cleanly
+          }
+        }
+
         // CRITICAL: Check for daily limit immediately after clicking Easy Apply
         // This catches the network error case where modal doesn't appear
         if (checkDailyLimit()) {
@@ -879,6 +1031,16 @@ async function mainLoop() {
         if (!modalCheck || modalCheck.offsetParent === null) {
           log('⚠️ Easy Apply modal did not appear - checking for limit...');
           await wait(1000); // Optimized modal check wait
+
+          // CHECK: Throttle first (recoverable) before daily-limit (terminal).
+          {
+            const throttle = checkRateLimitBlock();
+            if (throttle.blocked) {
+              log(`⏸️  Throttle detected on missing modal — ${throttle.reason}`);
+              await triggerCooldownAndRefresh(throttle.reason);
+              return;
+            }
+          }
 
           if (checkDailyLimit()) {
             log('');
@@ -2470,7 +2632,10 @@ function checkForStuckLoadingPopup() {
 
 // Mettre à jour le compteur appliqués
 function updateAppliedCount() {
-  chrome.storage.local.set({ appliedCount: appliedCount });
+  // A successful application means we're not currently throttled — reset
+  // the cooldown retry counter so a future throttle starts at the shortest
+  // backoff instead of escalating from the last cooldown.
+  chrome.storage.local.set({ appliedCount: appliedCount, cooldownRetries: 0 });
   try {
     chrome.runtime.sendMessage({ type: 'updateCount', count: appliedCount });
   } catch (e) {}
@@ -2599,7 +2764,11 @@ console.log('%c━━━━━━━━━━━━━━━━━━━━━�
 log('Script loaded v1.5.0 - Supports /jobs/search/ and /jobs/collections/');
 
 // SECURITY: Clear ALL running state on page load to prevent auto-start
-// Bot will ONLY start when user explicitly clicks "Start" button
+// Bot will ONLY start when user explicitly clicks "Start" button.
+//
+// EXCEPTION: If a cooldown was in flight (LinkedIn rate-limited the bot and we
+// scheduled an auto-resume before refreshing), honor it — but only when the
+// stored timestamp is fresh and the user had previously clicked Start.
 (async () => {
   try {
     // CRITICAL: Clear ALL security flags
@@ -2610,10 +2779,100 @@ log('Script loaded v1.5.0 - Supports /jobs/search/ and /jobs/collections/');
     await chrome.storage.local.set({ isRunning: false });
 
     // Load counters and state for display only (don't start bot)
-    const state = await chrome.storage.local.get(['appliedCount', 'skippedCount', 'appliedJobs']);
+    const state = await chrome.storage.local.get([
+      'appliedCount', 'skippedCount', 'appliedJobs',
+      'cooldownPending', 'cooldownStartTime', 'cooldownDuration',
+      'cooldownRetries', 'cooldownReason', 'cooldownPrevRunning'
+    ]);
     appliedCount = state.appliedCount || 0;
     skippedCount = state.skippedCount || 0;
     appliedJobs = state.appliedJobs || [];
+
+    // ── Cooldown auto-resume path ────────────────────────────────────────────
+    const cooldownFresh =
+      state.cooldownPending === true &&
+      state.cooldownPrevRunning === true &&
+      typeof state.cooldownStartTime === 'number' &&
+      (Date.now() - state.cooldownStartTime) < COOLDOWN_STALE_MS;
+
+    if (cooldownFresh) {
+      const duration = state.cooldownDuration || COOLDOWN_STEPS_MS[0];
+      const elapsed = Date.now() - state.cooldownStartTime;
+      const remaining = Math.max(0, duration - elapsed);
+      const retries = state.cooldownRetries || 1;
+
+      console.log('%c🔄 COOLDOWN RESUME PENDING', 'background: #ff9800; color: white; font-weight: bold; padding: 4px 8px;');
+      log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      log(`🔄 Cooldown active (attempt ${retries}/${COOLDOWN_MAX_RETRIES})`);
+      log(`   Reason: ${state.cooldownReason || 'unknown'}`);
+      log(`   Remaining: ${Math.ceil(remaining / 1000)}s`);
+      log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Tick popup countdown every second while waiting.
+      const tickEnd = Date.now() + remaining;
+      const tickInterval = setInterval(() => {
+        const secs = Math.max(0, Math.ceil((tickEnd - Date.now()) / 1000));
+        try {
+          chrome.runtime.sendMessage({
+            type: 'cooldownTick',
+            remainingSeconds: secs,
+            retries
+          });
+        } catch (_) {}
+        if (secs <= 0) clearInterval(tickInterval);
+      }, 1000);
+
+      // Wait the remaining cooldown window.
+      await new Promise(r => setTimeout(r, remaining));
+      clearInterval(tickInterval);
+
+      // Probe: is Easy Apply usable again? Look for any non-disabled
+      // Easy Apply button on the page (job detail panel or job cards).
+      const probeBtn = findEasyApplyButton(document);
+      // Also re-check throttle phrases — if LinkedIn still shows the banner,
+      // Easy Apply is still blocked even if a button exists somewhere.
+      const stillThrottled = checkRateLimitBlock().blocked;
+
+      if (probeBtn && !stillThrottled) {
+        log('✅ Easy Apply available again — resuming automation.');
+        isRunning = true;
+        userExplicitlyClickedStart = true; // controlled bypass: user had clicked Start before throttle
+        await chrome.storage.local.set({
+          isRunning: true,
+          cooldownPending: false
+          // retain cooldownRetries so consecutive throttles escalate the backoff
+        });
+        try {
+          chrome.runtime.sendMessage({
+            type: 'cooldownResumed',
+            retries
+          });
+        } catch (_) {}
+        log('🔒 Security flags restored (cooldown auto-resume)');
+        mainLoop();
+        return;
+      }
+
+      // Still blocked — escalate via another cooldown+refresh cycle.
+      log(`⚠️ Easy Apply still blocked after cooldown (button: ${!!probeBtn}, throttled: ${stillThrottled})`);
+      log('   Escalating cooldown and refreshing again...');
+      // Preserve the prev-running flag through the next refresh.
+      await chrome.storage.local.set({ cooldownPending: false });
+      await triggerCooldownAndRefresh(
+        stillThrottled ? 'still-throttled-after-cooldown' : 'easy-apply-missing-after-cooldown'
+      );
+      return;
+    }
+    // ── End cooldown path ────────────────────────────────────────────────────
+
+    // Clear any stale cooldown state (page loaded without an active cooldown).
+    if (state.cooldownPending) {
+      await chrome.storage.local.set({
+        cooldownPending: false,
+        cooldownRetries: 0,
+        cooldownPrevRunning: false
+      });
+    }
 
     console.log('%c⏸️ BOT STATUS: STOPPED (Waiting for START button)', 'background: #ff9800; color: white; font-weight: bold; padding: 4px 8px; border-radius: 3px;');
     log('ℹ️ Content script loaded - Bot ready (NOT running)');

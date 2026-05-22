@@ -3,7 +3,31 @@ let isRunning = false;
 
 // Load running state from storage
 async function loadRunningState() {
-  const local = await chrome.storage.local.get(['isRunning']);
+  const local = await chrome.storage.local.get([
+    'isRunning',
+    'cooldownPending', 'cooldownStartTime', 'cooldownDuration', 'cooldownRetries'
+  ]);
+
+  // Cooldown counts as "running" from the user's POV — automation is in
+  // recovery, not stopped. Storage may show isRunning=false during the
+  // refresh+wait window, so check cooldown state independently.
+  const COOLDOWN_STALE_MS = 30 * 60 * 1000;
+  const inCooldown =
+    local.cooldownPending === true &&
+    typeof local.cooldownStartTime === 'number' &&
+    (Date.now() - local.cooldownStartTime) < COOLDOWN_STALE_MS;
+
+  if (inCooldown) {
+    const elapsed = Date.now() - local.cooldownStartTime;
+    const remaining = Math.max(0, (local.cooldownDuration || 0) - elapsed);
+    const secs = Math.ceil(remaining / 1000);
+    const retries = local.cooldownRetries || 1;
+    isRunning = true;
+    updateButtons();
+    updateStatusDisplay(`Cooldown (${retries}/3) — ${secs}s`, true);
+    return;
+  }
+
   isRunning = local.isRunning || false;
   updateButtons();
   updateStatusDisplay(isRunning ? 'Running' : 'Stopped', isRunning);
@@ -365,13 +389,38 @@ chrome.runtime.onMessage.addListener((request) => {
     isRunning = false;
     updateButtons();
     updateStatusDisplay('Stopped', false);
+  } else if (request.type === 'cooldownStarted') {
+    // Throttle hit; page about to refresh. Treat as still-running so user
+    // sees that automation is in a recovery state, not stopped.
+    const secs = Math.ceil((request.durationMs || 0) / 1000);
+    isRunning = true;
+    updateButtons();
+    updateStatusDisplay(`Cooldown (${request.retries}/3) — ${secs}s`, true);
+  } else if (request.type === 'cooldownTick') {
+    isRunning = true;
+    updateButtons();
+    updateStatusDisplay(
+      `Cooldown (${request.retries}/3) — ${request.remainingSeconds}s`,
+      true
+    );
+  } else if (request.type === 'cooldownResumed') {
+    isRunning = true;
+    updateButtons();
+    updateStatusDisplay('Running', true);
+  } else if (request.type === 'cooldownExhausted') {
+    isRunning = false;
+    updateButtons();
+    updateStatusDisplay('Stopped (rate-limited)', false);
   }
 });
 
-// Update status (counters) every 2 seconds
-// NOTE: isRunning state is NOT in storage anymore, managed by messages from content script
+// Update status (counters) every 2 seconds. Also re-sync running/cooldown
+// state — if user opens the popup mid-cooldown, the cooldownTick messages
+// only fire once a second going forward; reloading from storage here keeps
+// the countdown fresh and recovers from missed messages.
 setInterval(async () => {
   await updateStatus();
+  await loadRunningState();
 }, 2000);
 
 // Export jobs to CSV
