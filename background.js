@@ -342,6 +342,95 @@ ${questionsBlock}`;
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GITHUB INTEGRATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GITHUB_API = 'https://api.github.com';
+
+function githubHeaders(pat) {
+  return {
+    'Authorization': `token ${pat.trim()}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'AutoApplyMax-Extension'
+  };
+}
+
+async function githubGet(pat, path) {
+  const resp = await fetch(`${GITHUB_API}${path}`, { headers: githubHeaders(pat) });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    const e = new Error(err.message || `GitHub API error ${resp.status}`);
+    e.status = resp.status;
+    throw e;
+  }
+  return resp.json();
+}
+
+async function handleGithubTestConnection(pat) {
+  const user = await githubGet(pat, '/user');
+  return { ok: true, username: user.login, avatarUrl: user.avatar_url };
+}
+
+async function handleGithubFetchUserRepos(pat) {
+  const repos = [];
+  let page = 1;
+  while (true) {
+    const batch = await githubGet(pat, `/user/repos?per_page=100&sort=updated&type=all&page=${page}`);
+    if (!batch.length) break;
+    for (const r of batch) {
+      repos.push({
+        name: r.name,
+        fullName: r.full_name,
+        description: r.description || '',
+        language: r.language || null,
+        stars: r.stargazers_count || 0,
+        updatedAt: r.updated_at,
+        isPrivate: r.private,
+        isFork: r.fork
+      });
+    }
+    if (batch.length < 100) break;
+    page++;
+  }
+  return { ok: true, repos };
+}
+
+async function handleGithubFetchRepoDetails(pat, fullName) {
+  // Parallel: languages + commits (both reliable)
+  const [langData, commitsData] = await Promise.all([
+    githubGet(pat, `/repos/${fullName}/languages`).catch(() => ({})),
+    githubGet(pat, `/repos/${fullName}/commits?per_page=1`).catch(() => ([]))
+  ]);
+
+  // README — 404 is expected for repos without one
+  let readmeContent = '';
+  try {
+    const readme = await githubGet(pat, `/repos/${fullName}/readme`);
+    readmeContent = atob(readme.content.replace(/\n/g, '')).substring(0, 3000);
+  } catch (_) { /* no readme */ }
+
+  // package.json — 404 is expected for non-JS repos
+  let packageJson = null;
+  try {
+    const pkg = await githubGet(pat, `/repos/${fullName}/contents/package.json`);
+    const parsed = JSON.parse(atob(pkg.content.replace(/\n/g, '')));
+    packageJson = {
+      dependencies: parsed.dependencies || {},
+      devDependencies: parsed.devDependencies || {}
+    };
+  } catch (_) { /* no package.json */ }
+
+  return {
+    languages: langData,
+    readmeContent,
+    packageJson,
+    contributionStats: {
+      lastCommitDate: commitsData[0]?.commit?.committer?.date || null
+    }
+  };
+}
+
 // Message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'incrementCount') {
@@ -467,5 +556,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     })();
     return true; // keep channel open for async sendResponse
+  } else if (message.action === 'githubTestConnection') {
+    (async () => {
+      try {
+        sendResponse(await handleGithubTestConnection(message.pat));
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  } else if (message.action === 'githubFetchUserRepos') {
+    (async () => {
+      try {
+        sendResponse(await handleGithubFetchUserRepos(message.pat));
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  } else if (message.action === 'githubFetchRepoDetails') {
+    (async () => {
+      try {
+        const details = await handleGithubFetchRepoDetails(message.pat, message.fullName);
+        sendResponse({ ok: true, details });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
   }
 });
