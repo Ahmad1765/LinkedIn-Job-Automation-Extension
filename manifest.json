@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
-    "https://openrouter.ai/*"
+    "https://openrouter.ai/*",
+    "https://api.github.com/*"
   ],
   "web_accessible_resources": [
     {
