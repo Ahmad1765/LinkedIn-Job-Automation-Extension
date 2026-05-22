@@ -1,205 +1,122 @@
 # AutoApplyMax
 
-**The #1 AI-powered Chrome extension for automated job applications.** Auto-apply on LinkedIn Easy Apply + one-click autofill on Indeed, Glassdoor, WTTJ & any job site — with AI Resume Generation, Cover Letters, ATS Scoring & a full tracking Dashboard.
+A Chrome extension that automates LinkedIn **Easy Apply** with AI-assisted question answering, daily-limit detection, and automatic cooldown recovery when LinkedIn rate-limits the session.
 
-<div align="center">
-
-[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Free-4285F4?style=for-the-badge&logo=google-chrome&logoColor=white)](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk)
-[![Website](https://img.shields.io/badge/Website-autoapplymax.com-0A66C2?style=for-the-badge&logo=google-chrome&logoColor=white)](https://www.autoapplymax.com)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xWaCXBZbws)
-
-**[Install from Chrome Web Store](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk)** to get the full experience with automatic updates, AI features & dashboard access.
-
-</div>
-
-> **⚠️ This GitHub repository contains the open-source core of AutoApplyMax (auto-apply + autofill engine). For the full experience including AI Resume Generator, AI Cover Letters, ATS Score Checker, Dashboard & Analytics, install from the [Chrome Web Store](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk) and create a free account at [autoapplymax.com](https://www.autoapplymax.com).**
+> Open-source core. Distributed under [AGPL-3.0](LICENSE).
 
 ---
 
-## See It In Action
+## Features
 
-<div align="center">
-
-[![AutoApplyMax Demo Video](https://img.youtube.com/vi/h7qUmzsk-Ps/maxresdefault.jpg)](https://youtu.be/h7qUmzsk-Ps)
-
-**Watch the 40s demo on YouTube**
-
-</div>
-
----
-
-## Why AutoApplyMax?
-
-| Without AutoApplyMax | With AutoApplyMax |
-|---------------------|-------------------|
-| 3-4 hours/day filling forms | **5 minutes** — set it and go |
-| 5-10 applications/day | **50+ applications/day** |
-| Same resume for every job | **AI-tailored resume per job** |
-| No cover letters (too tedious) | **AI cover letter in 1 click** |
-| Forget where you applied | **Full dashboard with analytics** |
-| No idea if your CV passes ATS | **ATS score checker (target 90%+)** |
+- **One-click automation** of LinkedIn Easy Apply across `/jobs/search/` and `/jobs/collections/`.
+- **Multi-locale UI handling** — locale-independent DOM selectors plus translated text fallbacks for English, French, Spanish, German, Italian, Dutch, Polish, Japanese, Chinese, and Korean LinkedIn accounts.
+- **AI-assisted question answering** via OpenRouter (BYO API key). Falls back to safe defaults for "years of experience" questions when the LLM is unavailable.
+- **Resume upload & reuse** — picks an existing uploaded resume or uploads a new PDF.
+- **Blacklist filtering** by keyword, title, and minimum years of experience.
+- **Daily-limit detection** — stops the bot cleanly when LinkedIn shows "You've reached today's Easy Apply limit".
+- **Cooldown auto-resume** *(new)* — when LinkedIn temporarily throttles the bot ("applying too quickly"), the extension waits with exponential backoff (90s → 3min → 6min), refreshes the page, verifies Easy Apply is available again, and resumes automatically. Stops after three consecutive throttles.
+- **Stuck-state recovery** — detects frozen modals and unresponsive loading popups, refreshes, and retries.
+- **CSV export** of every applied job.
 
 ---
 
-## Full Feature Suite
+## Installation
 
-### 1. Multi-Platform Auto-Apply
+This repository contains the unpacked extension. Install it in developer mode:
 
-One-click automation across 5+ job platforms with human-like behavior:
-
-| Platform | What AutoApplyMax Does |
-|----------|----------------------|
-| **LinkedIn** | Easy Apply automation — fills every field, clicks Submit |
-| **Indeed** | SmartApply multi-step form navigation |
-| **Glassdoor** | One-click application submission |
-| **WTTJ** | Full form completion |
-| **Monster** | Automated form filling & submission |
-| **Any site** | Universal Autofill for any job application form |
-
-### 2. AI Resume Generator (NEW)
-
-Generate a **tailored, ATS-optimized resume** for each job in seconds:
-
-- **3 professional templates** — Modern, Consulting & Harvard
-- **Job-specific keyword matching** — extracts requirements and adapts your resume
-- **ATS compatibility scoring** — target 90%+ to pass Applicant Tracking Systems
-- **Before/After comparison** — see exactly what changed and why
-- **Edit & download** — manual editing, PDF export
-
-> Available on the [AutoApplyMax Dashboard](https://www.autoapplymax.com/dashboard) — sign up free at [autoapplymax.com](https://www.autoapplymax.com)
-
-### 3. AI Cover Letter Generator (NEW)
-
-Personalized cover letters matched to each job description:
-
-- Company-specific personalization based on mission & values
-- Multiple professional tones
-- Job requirement matching
-- 1-click generation from the dashboard
-
-> Available on the [AutoApplyMax Dashboard](https://www.autoapplymax.com/dashboard) — sign up free at [autoapplymax.com](https://www.autoapplymax.com)
-
-### 4. ATS Score Checker (FREE)
-
-Check your resume's ATS compatibility score instantly:
-
-- Upload your CV + paste job description
-- Get keyword match analysis
-- Actionable tips to improve your score
-- **100% free, no login required** — try it now at [autoapplymax.com/tools/ats-score-checker](https://www.autoapplymax.com/tools/ats-score-checker)
-
-### 5. Real-Time Dashboard & Analytics
-
-Track every application in one place at [autoapplymax.com/dashboard](https://www.autoapplymax.com/dashboard):
-
-- **Application history** — every job you applied to
-- **Status tracking** — Applied > Screening > Interview > Offer
-- **Performance analytics** — weekly/monthly stats, response rates
-- **CSV export** — download all your data
-- **Document history** — all generated resumes & cover letters saved
-
-### 6. Smart Form Filling
-
-- Human-like behavior with random delays (avoids detection)
-- Multi-selector detection (XPath + CSS) for robust element finding
-- Auto-retry on failed actions
-- Stuck detection with auto-recovery
-- Session persistence — resume where you left off
+1. Clone or download this repository.
+2. Open `chrome://extensions/` in Chrome.
+3. Enable **Developer mode** (top-right toggle).
+4. Click **Load unpacked** and select the `AutoApplyMax` folder.
+5. Pin the extension to the toolbar.
 
 ---
 
-## Install
+## Usage
 
-> **For the best experience, install from the Chrome Web Store.** You'll get automatic updates, AI features, dashboard access, and support.
+1. Open the extension popup and fill in your profile (name, email, phone, years of experience, location, resume).
+2. Add an OpenRouter API key for AI question answering (optional but recommended).
+3. Navigate to `https://www.linkedin.com/jobs/search/` and apply the **Easy Apply** filter.
+4. Click **Start** in the extension popup.
+5. The bot iterates through the visible jobs, fills each form, and submits.
 
-### Option A: Chrome Web Store (Recommended)
+Status displayed in the popup:
 
-[![Install from Chrome Web Store](https://img.shields.io/badge/Install-Chrome%20Web%20Store-4285F4?style=for-the-badge&logo=google-chrome&logoColor=white)](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk)
-
-1. Click the link above
-2. Click "Add to Chrome"
-3. Sign up at [autoapplymax.com](https://www.autoapplymax.com) to unlock AI features & dashboard
-
-### Option B: Developer Mode (this repo)
-
-1. Clone this repo: `git clone https://github.com/Azoo92i/AutoApplyMax.git`
-2. Go to `chrome://extensions/` → Enable "Developer mode"
-3. Click "Load unpacked" → Select the cloned folder
-4. **Note:** Developer installs don't auto-update. For AI resume/cover letter features and the tracking dashboard, sign up at [autoapplymax.com](https://www.autoapplymax.com)
+| State | Meaning |
+|-------|---------|
+| `Stopped` | Bot idle, waiting for Start. |
+| `Running` | Bot processing jobs. |
+| `Cooldown (n/3) — Xs` | Rate-limited; refreshing and waiting `X` seconds before retrying attempt `n` of 3. |
+| `Stopped (rate-limited)` | Three consecutive throttles. Wait 15–30 minutes before restarting. |
 
 ---
 
-## How It Works
+## Configuration
+
+Stored locally in `chrome.storage.local`. No data leaves the browser except question text sent to OpenRouter (only when AI answering is enabled).
+
+| Field | Purpose |
+|-------|---------|
+| Personal info | First/last name, email, phone, city, years of experience. |
+| Resume PDF | Uploaded once; reused across applications. |
+| Keywords | Comma-separated; jobs are blacklisted by title match. |
+| Min years filter | Skips jobs requiring more years than configured. |
+| OpenRouter API key | For AI question answering (optional). |
+
+---
+
+## How the Cooldown Works
+
+LinkedIn enforces both a hard daily cap (≈ 50–100 applications) and a soft per-minute throttle. AutoApplyMax distinguishes them:
+
+- **Daily limit** → bot stops permanently for the day.
+- **Soft throttle** → bot enters cooldown:
+  1. Stores cooldown state in `chrome.storage.local` (start time, duration, retry count).
+  2. Reloads the page.
+  3. On script reload, waits the remaining cooldown.
+  4. Probes for a live Easy Apply button and checks that the throttle banner is gone.
+  5. If both pass, restores the running flags and resumes the main loop.
+  6. If still blocked, escalates to the next backoff tier and refreshes again.
+  7. After three failed cycles, stops and alerts the user.
+
+A successful application resets the retry counter so isolated throttles do not pre-escalate later ones.
+
+---
+
+## Project Structure
 
 ```
-Install extension → Fill your profile once
-        ↓
-Open LinkedIn/Indeed/etc → Click "Start" in the popup
-        ↓
-AutoApplyMax auto-fills & submits applications
-        ↓
-AI generates tailored resume + cover letter per job
-        ↓
-Dashboard tracks everything in real-time
+AutoApplyMax/
+├── manifest.json          MV3 manifest
+├── background.js          Service worker, OpenRouter proxy
+├── content-simple.js      Main automation: detection, filling, cooldown, mainLoop
+├── popup.html / popup.js  Extension UI, status, config
+├── popup-improvements.js  Toasts, validation, onboarding
+├── vendor/                pdf.js (resume parsing)
+├── icons/                 Extension icons
+└── docs/                  Static site assets
 ```
 
 ---
 
+## Permissions
 
-## Job Search Tips
-
-Based on data from thousands of automated applications:
-
-1. **Apply within 24 hours of posting.** Jobs posted <24h have 3x higher response rates.
-2. **Keep your resume ATS-simple.** Single column, standard fonts, no graphics. Target 70%+ keyword match.
-3. **Volume + quality is the formula.** 40-50 properly formatted applications/day with automation changes the math entirely.
-4. **Use AI to tailor each resume.** A generic resume gets ignored. AutoApplyMax's AI adapts your CV to each job description automatically.
-5. **Track everything.** Use the [dashboard](https://www.autoapplymax.com/dashboard) to see which platforms get the best response rates.
-
----
-
-## Links
-
-| | |
-|---|---|
-| **Website** | [autoapplymax.com](https://www.autoapplymax.com) |
-| **Dashboard** | [autoapplymax.com/dashboard](https://www.autoapplymax.com/dashboard) |
-| **ATS Checker** | [autoapplymax.com/tools/ats-score-checker](https://www.autoapplymax.com/tools/ats-score-checker) |
-| **Blog** | [autoapplymax.com/blog](https://www.autoapplymax.com/blog) |
-| **Chrome Extension** | [Chrome Web Store](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk) |
-| **Discord** | [Join Community](https://discord.gg/xWaCXBZbws) |
-| **Twitter/X** | [@autoapplymax](https://x.com/autoapplymax) |
+| Permission | Reason |
+|------------|--------|
+| `storage` | Persist config, counters, applied-job history, cooldown state. |
+| `activeTab` | Read the current LinkedIn page when the popup is open. |
+| `scripting` | Inject the content script on demand (no auto-load). |
+| Host `https://www.linkedin.com/*` | Automate Easy Apply. |
+| Host `https://openrouter.ai/*` | Send question text for AI answering when enabled. |
 
 ---
 
-## Security & Privacy
+## Disclaimer
 
-- All data stored locally in your browser (chrome.storage)
-- Open source — fully transparent code
-- No tracking, no data collection
-- Resume processing uses secure API calls — your data is never stored on external servers
-
----
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-- Report bugs via [Issues](https://github.com/Azoo92i/EAM-/issues)
-- Suggest features on [Discord](https://discord.gg/xWaCXBZbws)
+This extension automates interactions with LinkedIn. Automated activity may violate LinkedIn's Terms of Service and can result in account restrictions or bans. Use at your own risk. The authors accept no liability for account actions taken by LinkedIn.
 
 ---
 
 ## License
 
-Licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE).
-
----
-
-<div align="center">
-
-**AutoApplyMax — Go from 5 to 50+ job applications per day.**
-
-**[Install Free from Chrome Web Store](https://chromewebstore.google.com/detail/autoapplymax/oeaobljpdipleeanlfjppmlokkajodbk)** | **[Visit autoapplymax.com](https://www.autoapplymax.com)**
-
-</div>
+[GNU Affero General Public License v3.0](LICENSE).

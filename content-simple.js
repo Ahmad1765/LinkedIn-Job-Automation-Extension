@@ -3,7 +3,7 @@ let isRunning = false;
 let config = {};
 let appliedCount = 0;
 let skippedCount = 0;
-let appliedJobs = []; // Liste des jobs appliqués pour export
+let appliedJobs = []; // Applied jobs list for export
 let lastActivityTime = Date.now(); // Track last activity for stuck detection
 let lastJobIndex = -1; // Track last job processed
 const STUCK_TIMEOUT = 120000; // 2 minutes without activity = stuck
@@ -29,7 +29,7 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Cliquer - PROTECTED: Only works if bot is running
+// Click - PROTECTED: Only works if bot is running
 async function click(element) {
   // CRITICAL SECURITY CHECK: Prevent ANY clicks if bot is not explicitly started
   if (!isRunning || !userExplicitlyClickedStart) {
@@ -538,7 +538,7 @@ async function refreshAndReturnToSearch() {
   }
 }
 
-// Discard application (Python ligne 1500-1580) - ULTRA AGGRESSIVE VERSION + STUCK DETECTION
+// Discard application (Python line 1500-1580) - ULTRA AGGRESSIVE VERSION + STUCK DETECTION
 async function discardApplication() {
   log('🚀 DISCARD: Starting SAFE discard sequence...');
 
@@ -558,17 +558,17 @@ async function discardApplication() {
   ];
 
   try {
-    // 🆕 DETECTION CRITIQUE: Vérifier si popup de chargement est bloqué (Python ligne 1547-1558)
+    // 🆕 CRITICAL DETECTION: Check if loading popup is stuck (Python line 1547-1558)
     if (checkForStuckLoadingPopup()) {
-      log('🚨 POPUP DE CHARGEMENT BLOQUÉ DÉTECTÉ!');
-      log('🔄 REFRESH DE LA PAGE POUR DÉBLOQUER...');
+      log('🚨 STUCK LOADING POPUP DETECTED!');
+      log('🔄 REFRESHING PAGE TO RECOVER...');
       try {
         location.reload();
         await wait(2000); // Optimized refresh wait
-        log('✅ Page rafraîchie avec succès');
+        log('✅ Page refreshed successfully');
         return true;
       } catch (error) {
-        log(`❌ Erreur lors du refresh: ${error.message}`);
+        log(`❌ Refresh error: ${error.message}`);
       }
     }
 
@@ -670,7 +670,7 @@ async function discardApplication() {
   }
 }
 
-// Remplir un champ - PROTECTED: Only works if bot is running
+// Fill a field - PROTECTED: Only works if bot is running
 function fill(input, value) {
   // CRITICAL SECURITY CHECK: Prevent ANY form filling if bot is not explicitly started
   if (!isRunning || !userExplicitlyClickedStart) {
@@ -853,7 +853,7 @@ async function mainLoop() {
       }
 
       if (jobCards.length === 0) {
-        log(`Aucune offre trouvée. Attente 5s...`);
+        log(`No jobs found. Waiting 5s...`);
         log(`   URL: ${location.href}`);
         // Diagnostic: count anything that LOOKS like a job result container
         const diag = {
@@ -883,10 +883,10 @@ async function mainLoop() {
         continue;
       }
 
-      log(`${jobCards.length} offres trouvées`);
+      log(`${jobCards.length} jobs found`);
       updateActivity(); // Found jobs = activity
 
-      // Python ligne 1701: for job in job_listings
+      // Python line 1701: for job in job_listings
       for (let i = 0; i < jobCards.length; i++) {
         if (!isRunning) break;
 
@@ -957,7 +957,7 @@ async function mainLoop() {
         const easyApplyBtn = findEasyApplyButton(document);
 
         if (!easyApplyBtn) {
-          log('Pas Easy Apply, skip');
+          log('No Easy Apply, skip');
           skippedCount++;
           updateSkippedCount();
           continue;
@@ -1081,14 +1081,14 @@ async function mainLoop() {
           continue;
         }
 
-        // Infos du job déjà extraites plus haut pour blacklist, on les réutilise
+        // Job info already extracted above for blacklist, reusing it
         const jobLink = job.querySelector('a')?.href || window.location.href;
 
-        // Remplir formulaire multi-étapes avec TIMEOUT (Python ligne 528-529)
+        // Fill multi-step form with TIMEOUT (Python line 528-529)
         let step = 0;
         const applicationStartTime = Date.now();
-        const applicationTimeout = 180000; // 3 minutes max par candidature
-        let loadingScreenTimeout = 20000; // 20 secondes pour écran de chargement (Python ligne 1481-1497)
+        const applicationTimeout = 180000; // 3 minutes max per application
+        let loadingScreenTimeout = 20000; // 20 seconds for loading screen (Python line 1481-1497)
         let lastActivityTime = Date.now();
         let disabledRetries = 0;         // counts consecutive "Next disabled" attempts before discard
         let validationRetries = 0;       // counts consecutive validation-error sightings before discard
@@ -1098,7 +1098,7 @@ async function mainLoop() {
         while (step < 30) {  // allow more iterations (multi-step apps with retries can exceed 10)
           step++;
 
-          // TIMEOUT CHECK (Python ligne 639)
+          // TIMEOUT CHECK (Python line 639)
           if (Date.now() - applicationStartTime > applicationTimeout) {
             log('⏰ TIMEOUT 3min - Discarding application');
             await discardApplication();
@@ -1107,9 +1107,9 @@ async function mainLoop() {
             break;
           }
 
-          // 🆕 RE-CHECK: Popup bloqué avant chaque step (Python ligne 1563-1568)
+          // 🆕 RE-CHECK: Stuck popup before each step (Python line 1563-1568)
           if (checkForStuckLoadingPopup()) {
-            log('🚨 POPUP TOUJOURS BLOQUÉ - REFRESH...');
+            log('🚨 POPUP STILL STUCK - REFRESHING...');
             location.reload();
             await wait(2000); // Optimized refresh wait
             skippedCount++;
@@ -1152,7 +1152,7 @@ async function mainLoop() {
             }
           }
 
-          // CHECK LOADING SCREEN (Python ligne 1481-1497)
+          // CHECK LOADING SCREEN (Python line 1481-1497)
           if (await isPageLoadingSlow()) {
             log('⏳ Loading screen detected...');
             const loadingStart = Date.now();
@@ -1565,7 +1565,7 @@ async function mainLoop() {
             }
           }
 
-          // 4. RADIO BUTTONS (Python ligne 1037)
+          // 4. RADIO BUTTONS (Python line 1037)
           const radios = modal.querySelectorAll('fieldset[data-test-form-builder-radio-button-form-component]');
           for (let fieldset of radios) {
             const questionLabel = fieldset.querySelector('legend, span[class*="title"]');
@@ -1676,10 +1676,10 @@ async function mainLoop() {
             }
           }
 
-          // 5. DROPDOWN/SELECT (Python ligne 661)
+          // 5. DROPDOWN/SELECT (Python line 661)
           const selects = modal.querySelectorAll('select');
           for (let select of selects) {
-            if (select.selectedIndex > 0) continue; // Skip si déjà sélectionné
+            if (select.selectedIndex > 0) continue; // Skip if already selected
 
             // Get label from multiple sources
             let labelText = '';
@@ -1753,7 +1753,7 @@ async function mainLoop() {
               }
             }
 
-            // Si pas trouvé, prendre option 1 (pas 0 car souvent "Select...")
+            // If not found, take option 1 (not 0 since it's often "Select...")
             if (!selectedOption && options.length > 1) {
               selectedOption = options[1];
             }
@@ -1764,7 +1764,7 @@ async function mainLoop() {
             }
           }
 
-          // 6. DROPDOWN CUSTOM LINKEDIN (Python ligne 668)
+          // 6. DROPDOWN CUSTOM LINKEDIN (Python line 668)
           const customDropdowns = modal.querySelectorAll('button[aria-haspopup="listbox"], button.artdeco-dropdown__trigger');
           for (let dropdown of customDropdowns) {
             // Get label/question text for smart selection
@@ -1786,11 +1786,11 @@ async function mainLoop() {
 
             const question = questionText.toLowerCase();
 
-            // Cliquer pour ouvrir
+            // Click to open
             dropdown.click();
             await wait(500);
 
-            // Chercher les options
+            // Look for options
             const listbox = document.querySelector('[role="listbox"]');
             if (listbox) {
               const options = Array.from(listbox.querySelectorAll('[role="option"]'));
@@ -1869,13 +1869,13 @@ async function mainLoop() {
           // internal data-attrs (not translated) with text fallback.
           const stepBtn = findModalStepButton(modal);
           if (!stepBtn) {
-            log('Pas de bouton trouvé');
+            log('No button found');
             break;
           }
           const nextBtn = stepBtn.btn;
           const isSubmit = stepBtn.type === 'submit';
 
-          // IMPORTANT: Unfollow AVANT de cliquer Submit (Python ligne 1974)
+          // IMPORTANT: Unfollow BEFORE clicking Submit (Python line 1974)
           if (isSubmit) {
             log('Avant Submit: unfollow entreprise...');
 
@@ -1883,7 +1883,7 @@ async function mainLoop() {
             nextBtn.scrollIntoView({ block: 'end', behavior: 'smooth' });
             await wait(800);
 
-            // Chercher checkbox Follow company (Python ligne 1319)
+            // Look for Follow company checkbox (Python line 1319)
             const followCheckbox = modal.querySelector('input[id="follow-company-checkbox"]') ||
                                   modal.querySelector('input[id*="follow-company"][type="checkbox"]');
 
@@ -1892,7 +1892,7 @@ async function mainLoop() {
               followCheckbox.scrollIntoView({ block: 'center', behavior: 'smooth' });
               await wait(500);
 
-              // Cliquer sur le label (Python ligne 1321)
+              // Click the label (Python line 1321)
               const label = modal.querySelector(`label[for="${followCheckbox.id}"]`);
               if (label) {
                 await click(label);
@@ -1902,13 +1902,13 @@ async function mainLoop() {
                 log('✅ Entreprise UNFOLLOWED (fallback)');
               }
             } else {
-              log('Checkbox Follow déjà décochée ou non trouvée');
+              log('Follow checkbox already unchecked or not found');
             }
 
             await wait(500);
           }
 
-          // Vérifier que le bouton n'est pas disabled — RETRY rather than instant discard
+          // Verify the button isn't disabled — RETRY rather than instant discard
           if (nextBtn.disabled || nextBtn.getAttribute('aria-disabled') === 'true') {
             disabledRetries++;
             log(`⚠️ Next button disabled (retry ${disabledRetries}/${MAX_DISABLED_RETRIES}) on step ${step}`);
@@ -1934,7 +1934,7 @@ async function mainLoop() {
           // Attendre que la page change
           await wait(1000); // Optimized page change wait
 
-          // Vérifier si vraiment passé à l'étape suivante (post-click validation)
+          // Verify we actually moved to the next step (post-click validation)
           const stillSameModal = document.querySelector('.jobs-easy-apply-modal');
           if (stillSameModal && !isSubmit) {
             const errorMessages = [
@@ -1977,10 +1977,10 @@ async function mainLoop() {
           }
 
           if (isSubmit) {
-            log('✅ Submit cliqué !');
+            log('✅ Submit clicked!');
             appliedCount++;
 
-            // Sauvegarder le job appliqué pour export
+            // Save the applied job for export
             appliedJobs.push({
               title: jobTitle,
               company: jobCompany,
@@ -2052,7 +2052,7 @@ async function mainLoop() {
         break; // Exit the while loop
       }
 
-      // Page suivante (Python ligne 2047) - IMPROVED WITH FALLBACKS
+      // Next page (Python line 2047) - IMPROVED WITH FALLBACKS
       log('🔍 Recherche page suivante...');
       let nextPageClicked = false;
 
@@ -2144,7 +2144,7 @@ async function mainLoop() {
       if (!nextPageClicked) {
         const iconNextBtn = document.querySelector('.jobs-search-pagination button[aria-label*="Next"], .jobs-search-pagination button svg[class*="chevron-right"]')?.closest('button');
         if (iconNextBtn && iconNextBtn.offsetParent !== null && !iconNextBtn.disabled) {
-          log('✅ Clique sur bouton Next (icône)');
+          log('✅ Clicked Next button (icon)');
           await click(iconNextBtn);
           await wait(1000); // Ultra optimized page load wait
           nextPageClicked = true;
@@ -2187,26 +2187,26 @@ async function mainLoop() {
       }
 
       if (nextPageClicked) {
-        log('✅ Passage à la page suivante réussi');
+        log('✅ Moved to next page successfully');
         updateActivity();
         continue;
       } else {
-        log('📋 Fin des pages - Aucune page suivante trouvée');
+        log('📋 End of pages - no next page found');
         log(`   Final URL: ${location.href}`);
         log(`   Tip: if there were more jobs you expected, LinkedIn may have changed pagination DOM; report this log.`);
         break;
       }
 
     } catch (error) {
-      log(`Erreur: ${error.message}`);
+      log(`Error: ${error.message}`);
       await wait(1500); // Optimized error wait
     }
   }
 
-  log('Arrêt');
+  log('Stopped');
 }
 
-// Vérifier si le job contient des mots blacklistés
+// Check if the job contains blacklisted words
 function shouldSkipByBlacklist(title, company, description, blacklistKeywords) {
   if (!blacklistKeywords || blacklistKeywords.trim() === '') return false;
 
@@ -2508,13 +2508,13 @@ function extractJobDescription(jobCard) {
   return '';
 }
 
-// Extraire années d'expérience requises du texte (multilingue)
+// Extract required years of experience from text (multilingual matchers)
 function extractYearsRequired(text) {
   if (!text) return 0;
 
   const lowerText = text.toLowerCase();
 
-  // Patterns multilingues pour années d'expérience
+  // Multilingual patterns for years of experience
   const patterns = [
     // English: "5+ years", "5-8 years", "5 years"
     /(\d+)\+?\s*(?:years?|yrs?)/gi,
@@ -2540,12 +2540,12 @@ function extractYearsRequired(text) {
   return years.length > 0 ? Math.max(...years) : 0;
 }
 
-// Vérifier si le job doit être skippé selon années requises
+// Check whether the job should be skipped based on required years
 function shouldSkipByExperience(jobCard, maxYearsRequired) {
   if (!maxYearsRequired || maxYearsRequired <= 0) return false;
 
   try {
-    // Chercher dans le titre et la description visible
+    // Search in the visible title and description
     const title = jobCard.querySelector('.job-card-list__title, .artdeco-entity-lockup__title')?.textContent || '';
     const subtitle = jobCard.querySelector('.job-card-container__metadata-item')?.textContent || '';
     const combinedText = title + ' ' + subtitle;
@@ -2563,16 +2563,16 @@ function shouldSkipByExperience(jobCard, maxYearsRequired) {
   return false;
 }
 
-// Fonction pour détecter si la page charge lentement (Python ligne 1440-1479)
+// Detect slow page load (Python line 1440-1479)
 async function isPageLoadingSlow() {
   try {
-    // Check document readyState (Python ligne 1446)
+    // Check document readyState (Python line 1446)
     if (document.readyState !== 'complete') {
       log(`⏳ Page still loading (readyState: ${document.readyState})`);
       return true;
     }
 
-    // Chercher des spinners/loaders visibles (Python ligne 1517-1528)
+    // Look for visible spinners/loaders (Python line 1517-1528)
     const spinners = document.querySelectorAll('[role="progressbar"], .artdeco-loader, .loading-spinner, .spinner, .loading');
     for (let spinner of spinners) {
       if (spinner.offsetParent !== null) { // Visible
@@ -2580,22 +2580,22 @@ async function isPageLoadingSlow() {
       }
     }
 
-    // Vérifier si la modal est visible (Python ligne 1466-1469)
+    // Check if the modal is visible (Python line 1466-1469)
     const modal = document.querySelector('.jobs-easy-apply-modal');
     if (!modal || !modal.offsetParent) {
-      return true; // Modal pas visible = en chargement
+      return true; // Modal not visible = still loading
     }
 
     return false;
   } catch (error) {
-    return true; // Assume slow loading on error (Python ligne 1477)
+    return true; // Assume slow loading on error (Python line 1477)
   }
 }
 
-// Fonction pour détecter si popup de chargement est BLOQUÉ (Python ligne 1513-1545)
+// Detect if the loading popup is STUCK (Python line 1513-1545)
 function checkForStuckLoadingPopup() {
   try {
-    // Chercher les spinners/loaders de LinkedIn (Python ligne 1517-1528)
+    // Look for LinkedIn spinners/loaders (Python line 1517-1528)
     const loadingIndicators = document.querySelectorAll(
       '.artdeco-loader, .loading, .spinner, [role="progressbar"]'
     );
@@ -2603,13 +2603,13 @@ function checkForStuckLoadingPopup() {
     if (loadingIndicators.length > 0) {
       for (let indicator of loadingIndicators) {
         if (indicator.offsetParent !== null) { // Visible
-          log('⚠️ POPUP DE CHARGEMENT DÉTECTÉ ET VISIBLE!');
+          log('⚠️ LOADING POPUP DETECTED AND VISIBLE!');
           return true;
         }
       }
     }
 
-    // Vérifier aussi si le modal est figé (pas de boutons cliquables) (Python ligne 1531-1540)
+    // Also check if the modal is frozen (no clickable buttons) (Python line 1531-1540)
     const modal = document.querySelector('.jobs-easy-apply-modal');
     if (modal && modal.offsetParent !== null) {
       const buttons = modal.querySelectorAll('button');
@@ -2618,19 +2618,19 @@ function checkForStuckLoadingPopup() {
       );
 
       if (clickableButtons.length === 0) {
-        log('⚠️ MODAL FIGÉ DÉTECTÉ (aucun bouton cliquable)!');
+        log('⚠️ FROZEN MODAL DETECTED (no clickable buttons)!');
         return true;
       }
     }
 
     return false;
   } catch (error) {
-    log(`⚠️ Erreur lors de la vérification du popup: ${error.message}`);
+    log(`⚠️ Error checking popup state: ${error.message}`);
     return false;
   }
 }
 
-// Mettre à jour le compteur appliqués
+// Update applied counter
 function updateAppliedCount() {
   // A successful application means we're not currently throttled — reset
   // the cooldown retry counter so a future throttle starts at the shortest
@@ -2641,7 +2641,7 @@ function updateAppliedCount() {
   } catch (e) {}
 }
 
-// Mettre à jour le compteur skipped
+// Update skipped counter
 function updateSkippedCount() {
   chrome.storage.local.set({ skippedCount: skippedCount });
   try {
@@ -2649,12 +2649,12 @@ function updateSkippedCount() {
   } catch (e) {}
 }
 
-// Sauvegarder les jobs appliqués dans le storage
+// Save applied jobs to storage
 function saveAppliedJobsToStorage() {
   chrome.storage.local.set({ appliedJobs: appliedJobs });
 }
 
-// Écouter les messages
+// Listen for messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Handle async operations properly
   (async () => {
@@ -2667,7 +2667,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           'whitelistKeywords', 'aiEnabled', 'openrouterApiKey', 'openrouterModel'
         ]);
 
-        // Charger les compteurs depuis storage
+        // Load counters from storage
         const local = await chrome.storage.local.get(['appliedCount', 'skippedCount', 'appliedJobs', 'resumeFile', 'resumeFileName', 'resumeFileType']);
         appliedCount = local.appliedCount || 0;
         skippedCount = local.skippedCount || 0;

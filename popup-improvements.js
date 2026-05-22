@@ -1,16 +1,16 @@
 // ==========================================
-// AMÉLIORATIONS POPUP - v1.3.0
+// POPUP ENHANCEMENTS - v1.3.0
 // Toast notifications, Validation, Onboarding
 // ==========================================
 
 // ==========================================
-// TOAST NOTIFICATIONS (remplace les alerts)
+// TOAST NOTIFICATIONS (replaces alerts)
 // ==========================================
 
 let toastContainer = null;
 
 function showToast(message, type = 'info', duration = 4000) {
-  // Créer le container si nécessaire
+  // Create the container if needed
   if (!toastContainer) {
     toastContainer = document.createElement('div');
     toastContainer.id = 'toast-container';
@@ -26,7 +26,7 @@ function showToast(message, type = 'info', duration = 4000) {
     document.body.appendChild(toastContainer);
   }
 
-  // Créer le toast
+  // Create the toast
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
 
@@ -92,7 +92,7 @@ function showToast(message, type = 'info', duration = 4000) {
     </div>
   `;
 
-  // Ajouter au container
+  // Append to container
   toastContainer.appendChild(toast);
 
   // Add close button listener (no inline handler for CSP compliance)
@@ -101,14 +101,14 @@ function showToast(message, type = 'info', duration = 4000) {
     closeBtn.addEventListener('click', () => toast.remove());
   }
 
-  // Auto-remove après duration
+  // Auto-remove after duration
   setTimeout(() => {
     toast.style.animation = 'slideOut 0.3s ease-out';
     setTimeout(() => toast.remove(), 300);
   }, duration);
 }
 
-// Ajouter les animations CSS
+// Add CSS animations
 const style = document.createElement('style');
 style.textContent = `
   @keyframes slideIn {
@@ -135,7 +135,7 @@ style.textContent = `
 document.head.appendChild(style);
 
 // ==========================================
-// VALIDATION DES CHAMPS
+// FIELD VALIDATION
 // ==========================================
 
 const validators = {
@@ -276,7 +276,7 @@ function setupValidation() {
 }
 
 // ==========================================
-// ONBOARDING - PREMIÈRE UTILISATION
+// ONBOARDING - FIRST-TIME USER
 // ==========================================
 
 async function checkOnboarding() {
@@ -288,7 +288,7 @@ async function checkOnboarding() {
 }
 
 function showOnboarding() {
-  // Créer l'overlay
+  // Create the overlay
   const overlay = document.createElement('div');
   overlay.id = 'onboarding-overlay';
   overlay.style.cssText = `
@@ -449,7 +449,7 @@ function showOnboarding() {
 }
 
 // ==========================================
-// EXPORT: Rendre disponibles globalement
+// EXPORT: expose globally
 // ==========================================
 
 window.showToast = showToast;
