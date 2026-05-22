@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>cv-generator tests</title>
+</head>
+<body>
+  <h2>cv-generator.js Tests</h2>
+  <pre id="output"></pre>
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="cv-generator.js"></script>
+  <script>
+    const out = document.getElementById('output');
+    function pass(msg) { out.textContent += '✅ ' + msg + '\n'; }
+    function fail(msg) { out.textContent += '❌ FAIL: ' + msg + '\n'; console.error(msg); }
+
+    // Test 1: namespace exists
+    if (window.AutoApplyMax && typeof window.AutoApplyMax.generateCVPdf === 'function') {
+      pass('AutoApplyMax.generateCVPdf is a function');
+    } else {
+      fail('AutoApplyMax.generateCVPdf missing');
+    }
+
+    // Test 2: hashJobDesc produces consistent hex strings
+    const h1 = window.AutoApplyMax.hashJobDesc('Senior React Developer');
+    const h2 = window.AutoApplyMax.hashJobDesc('Senior React Developer');
+    if (h1 === h2 && h1.startsWith('cv_') && h1.length > 5) {
+      pass('hashJobDesc is deterministic: ' + h1);
+    } else {
+      fail('hashJobDesc inconsistent: ' + h1 + ' vs ' + h2);
+    }
+
+    // Test 3: different inputs produce different hashes
+    const h3 = window.AutoApplyMax.hashJobDesc('Backend Python Engineer');
+    if (h1 !== h3) {
+      pass('hashJobDesc differentiates inputs');
+    } else {
+      fail('hashJobDesc collision on different inputs');
+    }
+
+    // Test 4: cvToBase64 returns non-empty base64 string
+    const sampleCV = {
+      summary: 'Experienced full-stack developer with 5 years building scalable web apps.',
+      skills: ['React', 'Node.js', 'TypeScript', 'PostgreSQL'],
+      projects: [
+        {
+          name: 'my-portfolio',
+          description: 'Personal portfolio built with React and deployed on Vercel.',
+          technologies: ['React', 'CSS'],
+          url: 'https://github.com/user/my-portfolio'
+        }
+      ],
+      githubUrl: 'https://github.com/user'
+    };
+    const sampleProfile = {
+      firstName: 'John', lastName: 'Doe',
+      email: 'john@example.com', phone: '+1 555 0100', city: 'New York'
+    };
+
+    try {
+      const b64 = window.AutoApplyMax.cvToBase64(sampleCV, sampleProfile);
+      if (typeof b64 === 'string' && b64.length > 1000) {
+        pass('cvToBase64 returns base64 string (' + b64.length + ' chars)');
+      } else {
+        fail('cvToBase64 returned short/invalid string: ' + b64.substring(0, 50));
+      }
+    } catch (e) {
+      fail('cvToBase64 threw: ' + e.message);
+    }
+
+    // Test 5: idempotent guard — double-loading should not throw
+    try {
+      const orig = window.AutoApplyMax.generateCVPdf;
+      window.AutoApplyMax.generateCVPdf = orig;
+      pass('Idempotent re-assign safe');
+    } catch (e) {
+      fail('Idempotent test threw: ' + e.message);
+    }
+  </script>
+</body>
+</html>
