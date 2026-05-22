@@ -5,23 +5,34 @@ let isRunning = false;
 async function loadRunningState() {
   const local = await chrome.storage.local.get([
     'isRunning',
-    'cooldownPending', 'cooldownStartTime', 'cooldownDuration', 'cooldownRetries'
+    'cooldownPending', 'cooldownReadyToResume',
+    'cooldownStartTime', 'cooldownDuration', 'cooldownRetries'
   ]);
 
   // Cooldown counts as "running" from the user's POV — automation is in
-  // recovery, not stopped. Storage may show isRunning=false during the
-  // refresh+wait window, so check cooldown state independently.
+  // recovery, not stopped. Storage shows isRunning=false during the cooldown
+  // wait AND during the brief reload-to-resume window, so check both cooldown
+  // flags independently.
   const COOLDOWN_STALE_MS = 30 * 60 * 1000;
-  const inCooldown =
-    local.cooldownPending === true &&
+  const cooldownActive =
+    (local.cooldownPending === true || local.cooldownReadyToResume === true) &&
     typeof local.cooldownStartTime === 'number' &&
     (Date.now() - local.cooldownStartTime) < COOLDOWN_STALE_MS;
 
-  if (inCooldown) {
+  if (cooldownActive) {
+    const retries = local.cooldownRetries || 1;
+    // cooldownReadyToResume means the wait has finished and the page is
+    // reloading to probe Easy Apply — show "Resuming…" rather than a stale
+    // countdown.
+    if (local.cooldownReadyToResume === true) {
+      isRunning = true;
+      updateButtons();
+      updateStatusDisplay(`Resuming (${retries}/3)…`, true);
+      return;
+    }
     const elapsed = Date.now() - local.cooldownStartTime;
     const remaining = Math.max(0, (local.cooldownDuration || 0) - elapsed);
     const secs = Math.ceil(remaining / 1000);
-    const retries = local.cooldownRetries || 1;
     isRunning = true;
     updateButtons();
     updateStatusDisplay(`Cooldown (${retries}/3) — ${secs}s`, true);

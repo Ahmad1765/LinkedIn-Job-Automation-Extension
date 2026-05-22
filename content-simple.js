@@ -8,6 +8,10 @@ let lastActivityTime = Date.now(); // Track last activity for stuck detection
 let lastJobIndex = -1; // Track last job processed
 const STUCK_TIMEOUT = 120000; // 2 minutes without activity = stuck
 
+// Set by the 'stop' message handler so an in-flight cooldown wait can break
+// out immediately instead of sleeping until its timer expires.
+let cooldownAborted = false;
+
 // SECURITY: Ultimate protection flag - bot can ONLY run if user explicitly clicked Start
 let userExplicitlyClickedStart = false;
 
@@ -2850,11 +2854,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } else if (request.action === 'stop') {
         isRunning = false;
         userExplicitlyClickedStart = false; // Clear security flag
+        // Trip the cooldown abort flag — if the init IIFE is currently sleeping
+        // through a cooldown wait, this lets it break out on the next 1s tick
+        // instead of finishing the wait and auto-resuming.
+        cooldownAborted = true;
         log('⏸️ Bot stopped by user');
         log('🔒 Security flags cleared: isRunning=false, userExplicitlyClickedStart=false');
 
-        // Update storage
-        await chrome.storage.local.set({ isRunning: false });
+        // Clear ALL cooldown state so no resume fires after this stop.
+        await chrome.storage.local.set({
+          isRunning: false,
+          cooldownPending: false,
+          cooldownReadyToResume: false,
+          cooldownPrevRunning: false,
+          cooldownRetries: 0
+        });
 
         sendResponse({ success: true, message: 'Bot stopped' });
 
@@ -2919,37 +2933,118 @@ log('Script loaded v1.5.0 - Supports /jobs/search/ and /jobs/collections/');
     // Load counters and state for display only (don't start bot)
     const state = await chrome.storage.local.get([
       'appliedCount', 'skippedCount', 'appliedJobs',
-      'cooldownPending', 'cooldownStartTime', 'cooldownDuration',
+      'cooldownPending', 'cooldownReadyToResume',
+      'cooldownStartTime', 'cooldownDuration',
       'cooldownRetries', 'cooldownReason', 'cooldownPrevRunning'
     ]);
     appliedCount = state.appliedCount || 0;
     skippedCount = state.skippedCount || 0;
     appliedJobs = state.appliedJobs || [];
 
-    // ── Cooldown auto-resume path ────────────────────────────────────────────
     const cooldownFresh =
-      state.cooldownPending === true &&
-      state.cooldownPrevRunning === true &&
       typeof state.cooldownStartTime === 'number' &&
-      (Date.now() - state.cooldownStartTime) < COOLDOWN_STALE_MS;
+      (Date.now() - state.cooldownStartTime) < COOLDOWN_STALE_MS &&
+      state.cooldownPrevRunning === true;
 
-    if (cooldownFresh) {
+    // ── Cooldown path A: post-wait reload — probe and resume. ────────────────
+    // This fires on the SECOND reload of a cooldown cycle (the first reload
+    // happens when the throttle is first detected; the second happens when
+    // the cooldown wait timer expires). On this load we don't wait — the
+    // wait was already served on the previous load — we probe Easy Apply and
+    // either resume or escalate.
+    if (cooldownFresh && state.cooldownReadyToResume === true) {
+      const retries = state.cooldownRetries || 1;
+      log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      log(`🔄 Post-cooldown reload — probing Easy Apply (attempt ${retries}/${COOLDOWN_MAX_RETRIES})`);
+      log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Clear the ready flag so a future page reload doesn't replay this.
+      await chrome.storage.local.set({ cooldownReadyToResume: false });
+      cooldownAborted = false;
+
+      // Give LinkedIn a moment to render after reload.
+      await wait(1500);
+
+      // Honor a Stop that landed during render wait.
+      if (cooldownAborted) {
+        log('🛑 Resume cancelled by user during render wait.');
+        await chrome.storage.local.set({
+          cooldownPending: false,
+          cooldownReadyToResume: false,
+          cooldownPrevRunning: false
+        });
+        try { chrome.runtime.sendMessage({ type: 'botStopped' }); } catch (_) {}
+        return;
+      }
+
+      const probeBtn = findEasyApplyButton(document);
+      const stillThrottled = checkRateLimitBlock().blocked;
+
+      if (probeBtn && !stillThrottled) {
+        log('✅ Easy Apply available again — resuming automation.');
+        isRunning = true;
+        userExplicitlyClickedStart = true; // controlled bypass
+        cooldownAborted = false;
+        await chrome.storage.local.set({
+          isRunning: true,
+          cooldownPending: false,
+          cooldownReadyToResume: false
+          // retain cooldownRetries so consecutive throttles escalate
+        });
+        try {
+          chrome.runtime.sendMessage({ type: 'cooldownResumed', retries });
+        } catch (_) {}
+        log('🔒 Security flags restored (cooldown auto-resume)');
+        mainLoop();
+        return;
+      }
+
+      log(`⚠️ Easy Apply still blocked after cooldown (button: ${!!probeBtn}, throttled: ${stillThrottled})`);
+      log('   Escalating cooldown and refreshing again...');
+      await chrome.storage.local.set({
+        cooldownPending: false,
+        cooldownReadyToResume: false
+      });
+      await triggerCooldownAndRefresh(
+        stillThrottled ? 'still-throttled-after-cooldown' : 'easy-apply-missing-after-cooldown'
+      );
+      return;
+    }
+
+    // ── Cooldown path B: post-throttle reload — wait, then reload again. ─────
+    // This fires on the FIRST reload of a cooldown cycle. We sit on this page
+    // for the cooldown duration, ticking the popup countdown each second AND
+    // polling for an abort (Stop button). When the wait ends cleanly we set
+    // cooldownReadyToResume and reload one more time so the resume path runs
+    // on a freshly painted page.
+    if (cooldownFresh && state.cooldownPending === true) {
       const duration = state.cooldownDuration || COOLDOWN_STEPS_MS[0];
       const elapsed = Date.now() - state.cooldownStartTime;
       const remaining = Math.max(0, duration - elapsed);
       const retries = state.cooldownRetries || 1;
+      const tickEnd = Date.now() + remaining;
 
-      console.log('%c🔄 COOLDOWN RESUME PENDING', 'background: #ff9800; color: white; font-weight: bold; padding: 4px 8px;');
+      console.log('%c🔄 COOLDOWN ACTIVE', 'background: #ff9800; color: white; font-weight: bold; padding: 4px 8px;');
       log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       log(`🔄 Cooldown active (attempt ${retries}/${COOLDOWN_MAX_RETRIES})`);
       log(`   Reason: ${state.cooldownReason || 'unknown'}`);
       log(`   Remaining: ${Math.ceil(remaining / 1000)}s`);
+      log('   Page will refresh automatically when cooldown ends.');
+      log('   Click Stop in the popup to cancel.');
       log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // Tick popup countdown every second while waiting.
-      const tickEnd = Date.now() + remaining;
-      const tickInterval = setInterval(() => {
+      cooldownAborted = false;
+
+      // 1-second tick loop. After each tick we check:
+      //   (a) was Stop pressed? (cooldownAborted set by 'stop' handler)
+      //   (b) is the storage cooldownPending flag still true? (popup or other
+      //       message may have cleared it)
+      //   (c) has the timer expired?
+      // Any of (a)/(b) breaks the loop without reloading.
+      while (true) {
         const secs = Math.max(0, Math.ceil((tickEnd - Date.now()) / 1000));
+
+        // Notify popup of the countdown.
         try {
           chrome.runtime.sendMessage({
             type: 'cooldownTick',
@@ -2957,56 +3052,50 @@ log('Script loaded v1.5.0 - Supports /jobs/search/ and /jobs/collections/');
             retries
           });
         } catch (_) {}
-        if (secs <= 0) clearInterval(tickInterval);
-      }, 1000);
 
-      // Wait the remaining cooldown window.
-      await new Promise(r => setTimeout(r, remaining));
-      clearInterval(tickInterval);
-
-      // Probe: is Easy Apply usable again? Look for any non-disabled
-      // Easy Apply button on the page (job detail panel or job cards).
-      const probeBtn = findEasyApplyButton(document);
-      // Also re-check throttle phrases — if LinkedIn still shows the banner,
-      // Easy Apply is still blocked even if a button exists somewhere.
-      const stillThrottled = checkRateLimitBlock().blocked;
-
-      if (probeBtn && !stillThrottled) {
-        log('✅ Easy Apply available again — resuming automation.');
-        isRunning = true;
-        userExplicitlyClickedStart = true; // controlled bypass: user had clicked Start before throttle
-        await chrome.storage.local.set({
-          isRunning: true,
-          cooldownPending: false
-          // retain cooldownRetries so consecutive throttles escalate the backoff
-        });
-        try {
-          chrome.runtime.sendMessage({
-            type: 'cooldownResumed',
-            retries
+        if (cooldownAborted) {
+          log('🛑 Cooldown aborted by user.');
+          await chrome.storage.local.set({
+            cooldownPending: false,
+            cooldownReadyToResume: false,
+            cooldownPrevRunning: false
           });
-        } catch (_) {}
-        log('🔒 Security flags restored (cooldown auto-resume)');
-        mainLoop();
-        return;
+          try {
+            chrome.runtime.sendMessage({ type: 'botStopped' });
+          } catch (_) {}
+          return;
+        }
+
+        // Cheap external-cancel check (e.g. if storage was cleared by Stop).
+        const live = await chrome.storage.local.get(['cooldownPending']);
+        if (live.cooldownPending === false) {
+          log('🛑 Cooldown cancelled (storage cleared).');
+          try {
+            chrome.runtime.sendMessage({ type: 'botStopped' });
+          } catch (_) {}
+          return;
+        }
+
+        if (secs <= 0) break;
+        await wait(1000);
       }
 
-      // Still blocked — escalate via another cooldown+refresh cycle.
-      log(`⚠️ Easy Apply still blocked after cooldown (button: ${!!probeBtn}, throttled: ${stillThrottled})`);
-      log('   Escalating cooldown and refreshing again...');
-      // Preserve the prev-running flag through the next refresh.
-      await chrome.storage.local.set({ cooldownPending: false });
-      await triggerCooldownAndRefresh(
-        stillThrottled ? 'still-throttled-after-cooldown' : 'easy-apply-missing-after-cooldown'
-      );
-      return;
-    }
-    // ── End cooldown path ────────────────────────────────────────────────────
-
-    // Clear any stale cooldown state (page loaded without an active cooldown).
-    if (state.cooldownPending) {
+      // Wait completed normally — flip to "ready to resume" and reload.
+      log('⏰ Cooldown ended — reloading page to resume.');
       await chrome.storage.local.set({
         cooldownPending: false,
+        cooldownReadyToResume: true
+      });
+      location.reload();
+      return;
+    }
+    // ── End cooldown paths ───────────────────────────────────────────────────
+
+    // Clear any stale cooldown state (page loaded without an active cooldown).
+    if (state.cooldownPending || state.cooldownReadyToResume) {
+      await chrome.storage.local.set({
+        cooldownPending: false,
+        cooldownReadyToResume: false,
         cooldownRetries: 0,
         cooldownPrevRunning: false
       });
