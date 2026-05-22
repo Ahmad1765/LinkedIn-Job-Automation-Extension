@@ -20,6 +20,10 @@ let resumeFile = null; // Base64 data
 let resumeFileName = null;
 let resumeFileType = null;
 
+// GitHub-powered tailored CV
+let tailoredCVEnabled = false;
+let githubRepos = []; // Enriched repo objects from local storage
+
 // Logs simples
 function log(msg) {
   console.log('[LinkedIn Bot]', msg);
@@ -815,6 +819,42 @@ function fill(input, value) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   // Some LinkedIn fields validate on blur — give them a synthetic blur after a tick
   try { input.blur(); } catch (_) {}
+}
+
+// Extract job description text from LinkedIn job detail panel
+function extractJobDescription() {
+  const selectors = [
+    '.jobs-description__content',
+    '.jobs-box__html-content',
+    '.jobs-description-content__text',
+    '.job-details-about-the-job-module__description',
+    '[data-job-id] .description__text',
+    'article.jobs-description',
+    '.job-view-layout .jobs-description'
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el && el.innerText && el.innerText.trim().length > 50) {
+      return el.innerText.trim().substring(0, 4000);
+    }
+  }
+  return '';
+}
+
+// Extract company name from LinkedIn job card header
+function extractCompanyName() {
+  const selectors = [
+    '.jobs-unified-top-card__company-name',
+    '.job-details-jobs-unified-top-card__company-name',
+    '.topcard__org-name-link',
+    '[data-test-id="job-details-company-name"]',
+    '.jobs-top-card__company-name'
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el && el.innerText.trim()) return el.innerText.trim();
+  }
+  return 'Company';
 }
 
 // Convert base64 to File object for resume upload
@@ -2824,6 +2864,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           log(`📄 Resume loaded: ${resumeFileName}`);
         } else {
           log('ℹ️ No resume uploaded - file upload fields will be skipped');
+        }
+
+        // Load GitHub tailored CV settings
+        const githubSync  = await chrome.storage.sync.get(['tailoredCVEnabled']);
+        const githubLocal = await chrome.storage.local.get(['githubRepos']);
+        tailoredCVEnabled = !!githubSync.tailoredCVEnabled;
+        githubRepos       = githubLocal.githubRepos || [];
+        if (tailoredCVEnabled) {
+          log(`🎯 Tailored CV enabled — ${githubRepos.length} enriched repos loaded`);
         }
 
         log(`Config: ${config.firstName} ${config.lastName}, exp: ${config.yearsOfExperience || 2}, max required: ${config.maxYearsRequired || 3}`);
