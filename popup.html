@@ -42,6 +42,7 @@
       <button class="tab active" data-tab="personal">Personal Info</button>
       <button class="tab" data-tab="settings">Settings</button>
       <button class="tab" data-tab="applied">Applied Jobs</button>
+      <button class="tab" data-tab="github">GitHub</button>
     </div>
 
     <!-- Personal Info Tab -->
@@ -481,6 +482,67 @@
       </button>
     </div>
 
+    <!-- GitHub Tab -->
+    <div id="github-tab" class="tab-content">
+
+      <!-- Connection Section -->
+      <div class="section-header">GitHub Connection</div>
+      <div class="form-group">
+        <label>Personal Access Token</label>
+        <div class="pat-input-row">
+          <input type="password" id="githubPAT" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+          <button id="githubPATToggle" class="btn-icon" title="Show/hide token">👁</button>
+          <button id="githubTestBtn" class="btn btn-secondary btn-sm">Test</button>
+        </div>
+        <span id="githubConnectionStatus" class="github-status disconnected">○ Not connected</span>
+      </div>
+
+      <!-- Repository Section -->
+      <div class="section-header">Repositories</div>
+      <div class="github-repo-actions">
+        <button id="githubFetchReposBtn" class="btn btn-secondary btn-sm" disabled>Fetch All Repos</button>
+        <button id="githubFetchDetailsBtn" class="btn btn-primary btn-sm" disabled>Fetch Details ↓</button>
+      </div>
+      <div class="github-progress" id="githubProgressContainer" style="display:none">
+        <div class="github-progress-bar-track">
+          <div class="github-progress-bar" id="githubProgressBar" style="width:0%"></div>
+        </div>
+        <span id="githubProgressText" class="github-progress-text"></span>
+      </div>
+      <div id="githubRepoList" class="github-repo-list">
+        <span class="github-muted">Click "Fetch All Repos" to load your repositories.</span>
+      </div>
+      <div class="github-repo-controls" id="githubRepoControls" style="display:none">
+        <button id="githubSelectAll" class="btn btn-link btn-sm">Select All</button>
+        <button id="githubDeselectAll" class="btn btn-link btn-sm">Deselect All</button>
+        <span id="githubDetailsStatus" class="github-muted"></span>
+      </div>
+
+      <!-- AI-Tailored CV Section -->
+      <div class="section-header">AI-Tailored CV</div>
+      <div class="toggle-group">
+        <label class="toggle">
+          <input type="checkbox" id="tailoredCVEnabled">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">Enable tailored CV per job</span>
+        </label>
+      </div>
+
+      <div class="form-group" style="margin-top:12px">
+        <label>Paste a job description to preview a CV:</label>
+        <textarea id="githubJobDescPreview" rows="4"
+          placeholder="Senior React Developer at Acme Corp…&#10;&#10;Requirements: 3+ years React experience…"
+          style="resize:vertical; font-size:12px"></textarea>
+      </div>
+      <button id="githubPreviewCVBtn" class="btn btn-primary" style="width:100%">
+        Generate &amp; Preview CV
+      </button>
+      <div id="githubLastCV" class="github-last-cv" style="margin-top:8px">
+        <span class="github-muted">No CV generated yet</span>
+      </div>
+
+    </div><!-- /github-tab -->
+
     <!-- Instructions -->
     <div class="instructions">
       <details>
@@ -496,7 +558,10 @@
   </div>
 
   <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="cv-generator.js"></script>
   <script src="popup-improvements.js"></script>
+  <script src="github-popup.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
