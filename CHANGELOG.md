@@ -2,6 +2,25 @@
 
 All notable changes to AutoApplyMax will be documented in this file.
 
+## [v1.6.0] - 2026-05-22
+
+### ✨ New Features
+- **Cooldown auto-resume** — when LinkedIn temporarily throttles the bot ("We noticed you're applying at a fast pace"), the extension now pauses with exponential backoff (90s → 3min → 6min), refreshes the page automatically at the end of the cooldown, verifies Easy Apply is available again, and resumes the automation. Stops cleanly after three consecutive throttles.
+- **Throttle-banner detection** — detects LinkedIn's rate-limit dialog by matching the exact wording (`applying at a fast pace`, `briefly paused LinkedIn Apply`, `safeguard against automated inauthentic activities`, etc.) across body text, modals, dialogs, toasts, and inline feedback containers.
+- **Pre-flight throttle checks** — the bot now checks for throttle banners at the top of every job iteration AND on the job detail panel, not only after clicking Easy Apply.
+- **Disabled-button safeguard** — if LinkedIn renders the Easy Apply button as disabled, the bot treats it as a throttle signal and never clicks it (clicking disabled buttons is a known automation tell).
+- **Popup cooldown countdown** — popup status shows `Cooldown (n/3) — Xs` during the wait and `Resuming (n/3)…` while the post-cooldown reload is in flight.
+
+### 🐛 Bug Fixes
+- Stop button now works during cooldown. The cooldown wait is split into 1-second ticks that poll an abort flag, so a Stop press breaks the loop immediately instead of waiting for the timer to expire.
+- Page now reloads at the end of the cooldown (in addition to the reload at the start), giving the resume logic a freshly painted DOM to probe.
+
+### 🔧 Technical Improvements
+- All French and other non-English comments and log strings translated to English. Functional multilingual matchers (regex for `années`/`años`/`jahre`, button-label arrays for `Terminé`/`Fertig`/`完了`, throttle phrases for FR/ES/DE) are preserved.
+- Cooldown state now uses two storage flags (`cooldownPending`, `cooldownReadyToResume`) for the two-reload cycle, with a 30-minute staleness guard so a closed-then-reopened tab can't accidentally resume.
+- Cooldown retry counter resets to 0 after each successful application so isolated throttles do not pre-escalate later ones.
+- README rewritten for clarity (concise, professional, GitHub-focused).
+
 ## [v1.5.0] - 2026-01-15
 
 ### ✨ New Features

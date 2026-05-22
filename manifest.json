@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Auto Apply",
-  "version": "1.0.0",
+  "version": "1.6.0",
   "description": "Automates LinkedIn Easy Apply with AI-powered question answering, daily-limit detection, and cooldown auto-resume.",
   "permissions": [
     "storage",
