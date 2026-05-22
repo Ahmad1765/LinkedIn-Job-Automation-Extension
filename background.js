@@ -431,6 +431,96 @@ async function handleGithubFetchRepoDetails(pat, fullName) {
   };
 }
 
+async function handleGenerateTailoredCV({ jobDesc, githubProjects, profile }) {
+  const cfg = await chrome.storage.sync.get(['openrouterApiKey', 'openrouterModel']);
+  if (!cfg.openrouterApiKey || !cfg.openrouterApiKey.trim()) {
+    throw new Error('OpenRouter API key not set');
+  }
+
+  // Build project summaries (max 15 repos, capped for token efficiency)
+  const projectSummaries = (githubProjects || []).slice(0, 15).map(r => {
+    const langs = Object.keys(r.languages || {}).slice(0, 5).join(', ');
+    const pkgDeps = r.packageJson
+      ? Object.keys({ ...r.packageJson.dependencies, ...r.packageJson.devDependencies }).slice(0, 10).join(', ')
+      : '';
+    return [
+      `Repo: ${r.fullName || r.name}`,
+      langs          ? `Languages: ${langs}`     : (r.language ? `Language: ${r.language}` : ''),
+      pkgDeps        ? `Packages: ${pkgDeps}`     : '',
+      r.description  ? `Description: ${r.description}` : '',
+      r.readmeContent ? `README: ${r.readmeContent.substring(0, 400)}` : ''
+    ].filter(Boolean).join('\n');
+  }).join('\n\n---\n\n');
+
+  const systemPrompt = `You are a professional CV writer. Given a job description and a developer's GitHub projects, produce a tailored, ATS-friendly CV section.
+
+Output ONLY valid JSON — no prose, no markdown fences, no extra keys:
+{
+  "summary": "2-3 sentence professional summary emphasising fit for this role",
+  "skills": ["skill1", "skill2"],
+  "projects": [
+    {
+      "name": "Repo Name",
+      "description": "1-2 sentences emphasising relevance to the job",
+      "technologies": ["Tech1", "Tech2"],
+      "url": "https://github.com/owner/repo"
+    }
+  ],
+  "githubUrl": "https://github.com/<username>"
+}
+
+Rules:
+- Include 3-5 most relevant projects only
+- skills: 8-15 items, prioritise skills from the job description
+- summary: first person, professional, directly addresses role requirements
+- githubUrl: derive from the fullName fields (owner part)`;
+
+  const userPrompt = `CANDIDATE PROFILE:
+Name: ${((profile.firstName || '') + ' ' + (profile.lastName || '')).trim()}
+Email: ${profile.email || ''}
+Phone: ${profile.phone || ''}
+City: ${profile.city || ''}
+Years of Experience: ${profile.yearsOfExperience || ''}
+
+JOB DESCRIPTION (first 3000 chars):
+${(jobDesc || '').substring(0, 3000)}
+
+GITHUB PROJECTS:
+${projectSummaries || '(none provided — generate skills-only CV)'}`;
+
+  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${cfg.openrouterApiKey.trim()}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://github.com/local/job-auto-apply',
+      'X-Title': 'Job Auto Apply'
+    },
+    body: JSON.stringify({
+      model: (cfg.openrouterModel || 'openai/gpt-4o-mini').trim(),
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt }
+      ],
+      max_tokens: 1200,
+      temperature: 0.4
+    })
+  });
+
+  if (!resp.ok) {
+    const errBody = await resp.json().catch(() => ({}));
+    throw new Error(`OpenRouter ${resp.status}: ${errBody.error?.message || 'unknown error'}`);
+  }
+
+  const data = await resp.json();
+  const raw = data.choices?.[0]?.message?.content || '';
+
+  // Strip accidental markdown fences before parsing
+  const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const cvJson = JSON.parse(jsonStr);
+  return { ok: true, cvJson };
+}
+
 // Message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'incrementCount') {
@@ -580,6 +670,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const details = await handleGithubFetchRepoDetails(message.pat, message.fullName);
         sendResponse({ ok: true, details });
       } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  } else if (message.action === 'generateTailoredCV') {
+    (async () => {
+      try {
+        sendResponse(await handleGenerateTailoredCV(message));
+      } catch (err) {
+        console.error('generateTailoredCV error:', err);
         sendResponse({ ok: false, error: err.message });
       }
     })();
