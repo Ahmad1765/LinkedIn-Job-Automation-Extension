@@ -857,6 +857,100 @@ function extractCompanyName() {
   return 'Company';
 }
 
+// Attempt to generate and upload a tailored CV for the current job.
+// Returns true if a tailored CV was successfully uploaded, false on any failure
+// (caller falls through to static resume upload).
+async function tryUploadTailoredCV(fileInput) {
+  try {
+    // Guard: require AutoApplyMax namespace (injected before this script)
+    if (!window.AutoApplyMax || typeof window.AutoApplyMax.cvToBase64 !== 'function') {
+      log('⚠️ Tailored CV: AutoApplyMax not loaded, falling back to static resume');
+      return false;
+    }
+
+    const jobDesc = extractJobDescription();
+    if (!jobDesc) {
+      log('ℹ️ Tailored CV: no job description found — using static resume');
+      return false;
+    }
+
+    const companyName = extractCompanyName();
+    const hashKey     = window.AutoApplyMax.hashJobDesc(jobDesc);
+
+    // Check cache
+    const cached = await chrome.storage.local.get([hashKey]);
+    let base64PDF, cvFileName;
+
+    if (cached[hashKey] && cached[hashKey].pdf) {
+      log(`📋 Tailored CV: cache hit for ${hashKey.substring(0, 12)}…`);
+      base64PDF = cached[hashKey].pdf;
+      cvFileName = cached[hashKey].name;
+    } else {
+      log('🤖 Tailored CV: generating via LLM…');
+      const syncData = await chrome.storage.sync.get([
+        'firstName', 'lastName', 'email', 'phone', 'phoneCountryCode', 'city', 'yearsOfExperience'
+      ]);
+      const profile = {
+        firstName: syncData.firstName || '',
+        lastName:  syncData.lastName  || '',
+        email:     syncData.email     || '',
+        phone:     ((syncData.phoneCountryCode || '') + ' ' + (syncData.phone || '')).trim(),
+        city:      syncData.city      || '',
+        yearsOfExperience: syncData.yearsOfExperience || ''
+      };
+
+      const resp = await chrome.runtime.sendMessage({
+        action:         'generateTailoredCV',
+        jobDesc,
+        githubProjects: githubRepos,
+        profile
+      });
+
+      if (!resp || !resp.ok) {
+        log(`⚠️ Tailored CV: LLM failed (${resp?.error || 'no response'}) — using static resume`);
+        return false;
+      }
+
+      base64PDF = window.AutoApplyMax.cvToBase64(resp.cvJson, profile);
+      const safeName = companyName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+      cvFileName = `${profile.firstName}_${profile.lastName}_CV_${safeName}.pdf`.replace(/_{2,}/g, '_');
+
+      // Evict oldest CV from cache if over 20 entries
+      const allLocal = await chrome.storage.local.get(null);
+      const cvKeys   = Object.keys(allLocal).filter(k => k.startsWith('cv_'));
+      if (cvKeys.length >= 20) {
+        const oldestKey = cvKeys.sort((a, b) => ((allLocal[a] && allLocal[a].ts) || 0) - ((allLocal[b] && allLocal[b].ts) || 0))[0];
+        await chrome.storage.local.remove(oldestKey);
+      }
+
+      await chrome.storage.local.set({
+        [hashKey]:          { pdf: base64PDF, name: cvFileName, ts: Date.now() },
+        lastTailoredCVName: cvFileName,
+        lastTailoredCVData: base64PDF
+      });
+      log(`✅ Tailored CV generated: ${cvFileName}`);
+    }
+
+    // Build File object and upload using existing fillFileInput()
+    const byteChars = atob(base64PDF);
+    const bytes     = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    const file = new File([bytes], cvFileName, { type: 'application/pdf' });
+
+    const success = await fillFileInput(fileInput, file);
+    if (success) {
+      log(`📎 Tailored CV uploaded: ${cvFileName}`);
+      return true;
+    }
+    log('⚠️ Tailored CV: fillFileInput failed — using static resume');
+    return false;
+  } catch (err) {
+    log(`⚠️ Tailored CV error: ${err.message} — falling back to static resume`);
+    console.error('[LinkedIn Bot] tryUploadTailoredCV:', err);
+    return false;
+  }
+}
+
 // Convert base64 to File object for resume upload
 function base64ToFile(base64String, filename, mimeType) {
   try {
@@ -1666,6 +1760,32 @@ async function mainLoop() {
                 }
               }
               if (resumeAlreadySelected) break;
+            }
+          }
+
+          // STEP 2b-i: Tailored CV upload (if feature enabled, runs before static resume fallback)
+          if (!resumeAlreadySelected && tailoredCVEnabled && githubRepos.length > 0) {
+            const fileInputs = modal.querySelectorAll('input[type="file"]');
+            for (const fileInput of fileInputs) {
+              if (fileInput.files && fileInput.files.length > 0) continue;
+              // Check if this is a resume/CV input (same label check as static resume)
+              let labelText = ' ' + (fileInput.getAttribute('aria-label') || '')
+                            + ' ' + (fileInput.getAttribute('name') || '');
+              const inputId = fileInput.getAttribute('id');
+              if (inputId) {
+                const labelEl = modal.querySelector(`label[for="${inputId}"]`);
+                if (labelEl) labelText += ' ' + labelEl.textContent;
+              }
+              const parentLabel = fileInput.closest('label');
+              if (parentLabel) labelText += ' ' + parentLabel.textContent;
+              if (labelText.toLowerCase().match(/resume|cv|curriculum|vitae|upload.*document|file/)) {
+                const uploaded = await tryUploadTailoredCV(fileInput);
+                if (uploaded) {
+                  resumeAlreadySelected = true;
+                  break;
+                }
+                // Fall through: static resume upload below will run
+              }
             }
           }
 
