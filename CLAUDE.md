@@ -75,3 +75,47 @@ Key subsystems:
 - **Locale independence**: All LinkedIn DOM selectors must use `data-*` attributes or structural CSS classes, never translated text alone. Add translated text only as a fallback after data-attr checks fail.
 - **Cooldown staleness guard**: The popup treats cooldown storage as stale after 30 minutes (`COOLDOWN_STALE_MS`). Any cooldown timing changes must stay under this threshold or update the guard.
 - **Content script injection**: `content-simple.js` has no `run_at` in the manifest; it is injected via `chrome.scripting.executeScript` from the popup. Do not add it to `content_scripts` in the manifest.
+
+---
+
+## GitHub-Powered Tailored CV — Added in v1.7.0
+
+### New Files
+- `cv-generator.js` — `window.AutoApplyMax` namespace. `generateCVPdf(cvJson, profile)`, `cvToBase64(cvJson, profile)`, `hashJobDesc(text)`. Injected before `content-simple.js` and loaded in `popup.html`. Depends on `window.jspdf` from `vendor/jspdf.umd.min.js`.
+- `github-popup.js` — GitHub tab UI logic. Loaded in `popup.html`. Entry point: `initGitHubTab()` called from `popup.js` `DOMContentLoaded`.
+- `vendor/jspdf.umd.min.js` — jsPDF 2.5.1 UMD build (client-side PDF generation).
+- `test-cv-generator.html` — Browser test page for `cv-generator.js` (not shipped, development only).
+
+### Injection Chain (popup.js → executeScript)
+```
+['vendor/jspdf.umd.min.js', 'cv-generator.js', 'content-simple.js']
+```
+All three run in the same isolated world on the LinkedIn tab. `window.AutoApplyMax` and `window.jspdf` are available to `content-simple.js`.
+
+### New Message Actions (background.js)
+| Action | Input | Returns |
+|--------|-------|---------|
+| `githubTestConnection` | `{ pat }` | `{ ok, username, avatarUrl }` |
+| `githubFetchUserRepos` | `{ pat }` | `{ ok, repos: [{name, fullName, language, stars, updatedAt, isPrivate, isFork}] }` |
+| `githubFetchRepoDetails` | `{ pat, fullName }` | `{ ok, details: { languages, readmeContent, packageJson, contributionStats } }` |
+| `generateTailoredCV` | `{ jobDesc, githubProjects, profile }` | `{ ok, cvJson: { summary, skills, projects, githubUrl } }` |
+
+### New Storage Keys
+| Store | Key | Purpose |
+|-------|-----|---------|
+| `sync` | `githubPAT` | Personal Access Token |
+| `sync` | `tailoredCVEnabled` | Feature on/off |
+| `sync` | `githubPinnedRepos` | `string[]` of `"owner/repo"` to enrich |
+| `local` | `githubUsername` | Authenticated GitHub username |
+| `local` | `githubConnectionStatus` | `"disconnected" / "connected" / "error"` |
+| `local` | `githubAllRepos` | Basic repo list (for checkbox display) |
+| `local` | `githubRepos` | Enriched data for pinned repos only |
+| `local` | `githubReposFetchedAt` | Timestamp ms of last detail fetch |
+| `local` | `cv_<hash>` | `{ pdf: base64, name: string, ts: number }` — cached generated CVs (max 20) |
+| `local` | `lastTailoredCVName` | Filename of last generated CV |
+| `local` | `lastTailoredCVData` | Base64 PDF of last generated CV (for popup download) |
+
+### Key Constraints Added
+- **CV cache limit:** `cv_<hash>` entries capped at 20; oldest is evicted when limit is reached.
+- **jsPDF only in isolated world:** `window.jspdf` is accessible in content script and popup page. It is NOT available in `background.js` (service worker — no DOM).
+- **Fallback guarantee:** `tryUploadTailoredCV()` catches all errors and returns `false`, guaranteeing the static resume upload block runs if tailored CV fails.
