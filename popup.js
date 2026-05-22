@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateStatus();
   await loadRunningState(); // Load current running state
   setupTabs();
+  initGitHubTab(); // GitHub tab (defined in github-popup.js)
   setupResumeUpload();
   setupValidation(); // Setup field validation
   checkOnboarding(); // Check if first time user
@@ -306,7 +307,7 @@ document.getElementById('start-btn').addEventListener('click', async () => {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        files: ['content-simple.js']
+        files: ['vendor/jspdf.umd.min.js', 'cv-generator.js', 'content-simple.js']
       });
       console.log('✅ Content script injected successfully');
 
