@@ -691,3 +691,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+// ── Auto-reinject content script after page reloads triggered by the bot ─────
+//
+// content-simple.js calls location.reload() for cooldown waits and stuck
+// detection. Because it is injected on-demand (not via content_scripts in
+// manifest), it does NOT survive a page reload. This listener detects when a
+// LinkedIn tab finishes loading while a fresh cooldown is pending and
+// re-injects the full script bundle so the cooldown-resume IIFE can run.
+const REINJECT_COOLDOWN_STALE_MS = 30 * 60 * 1000; // mirrors COOLDOWN_STALE_MS in content-simple.js
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  // Only act on full page loads of LinkedIn tabs
+  if (changeInfo.status !== 'complete') return;
+  if (!tab.url || !tab.url.includes('linkedin.com')) return;
+
+  try {
+    const state = await chrome.storage.local.get([
+      'cooldownPending', 'cooldownReadyToResume',
+      'cooldownStartTime', 'cooldownPrevRunning'
+    ]);
+
+    const cooldownFresh =
+      typeof state.cooldownStartTime === 'number' &&
+      (Date.now() - state.cooldownStartTime) < REINJECT_COOLDOWN_STALE_MS &&
+      state.cooldownPrevRunning === true;
+
+    if (cooldownFresh && (state.cooldownPending === true || state.cooldownReadyToResume === true)) {
+      console.log('[AutoApplyMax] Cooldown pending — re-injecting content script after reload.');
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['vendor/jspdf.umd.min.js', 'cv-generator.js', 'content-simple.js']
+      });
+    }
+  } catch (err) {
+    // Tab may have navigated away or be inaccessible — silently ignore
+    console.warn('[AutoApplyMax] tabs.onUpdated reinject failed:', err.message);
+  }
+});
